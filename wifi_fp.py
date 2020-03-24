@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import scipy.stats as stt
 
 def create_radio_map(training_data):
     """
@@ -38,6 +39,18 @@ def create_radio_map(training_data):
 
 def mean_relev_rssi (rssi_list):
     return np.mean(rssi_list[rssi_list < 100])
+
+def similarity_calculation (cur_ap_rssi, rm_rssi):
+    """
+    Calculate the similarity between 2 RSSI rank vectors
+    :param ranks1: cur rssi vector that is compared
+    :param ranks2: radiomap rssi vector
+    :return:
+    """
+    ranks_cur = stt.rankdata(cur_ap_rssi, method='dense') # nans are given unique num
+    ranks_rm = stt.rankdata(rm_rssi, method='dense') # nans are given unique num
+    normalization = np.sum(ranks_cur < 100)
+    return np.sum((ranks_cur == ranks_rm) & (ranks_cur < 100)) / normalization
 
 if __name__== "__main__":
     training_data = pd.read_csv("sample_data/TrainingData.csv")
