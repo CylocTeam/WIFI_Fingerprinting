@@ -13,8 +13,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-training_data = pd.read_csv("UjiIndoorLoc/TrainingData.csv")
-validation_data = pd.read_csv("UjiIndoorLoc/ValidationData.csv")
+training_data = pd.read_csv("sample_data/TrainingData.csv")
+validation_data = pd.read_csv("sample_data/ValidationData.csv")
 
 training_data = training_data.dropna().dropna(axis=1)
 
