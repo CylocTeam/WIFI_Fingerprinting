@@ -30,7 +30,6 @@ def create_radio_map(training_data):
                                           zip(training_data.LONGITUDE, training_data.LATITUDE)))
     training_data_gridgroups = training_data.groupby(by="grid_pnt")
     training_data_agg = training_data_gridgroups.agg(agg_list)
-    training_data_agg = training_data_agg.dropna(how='all')
 
     # Update RM via the training data
     grid_pnt_list = list(zip(*training_data_agg.index.to_list()))
@@ -47,20 +46,42 @@ def similarity_calculation (cur_ap_rssi, rm_rssi):
     :param ranks2: radiomap rssi vector
     :return:
     """
-    ranks_cur = stt.rankdata(cur_ap_rssi, method='dense') # nans are given unique num
-    ranks_rm = stt.rankdata(rm_rssi, method='dense') # nans are given unique num
-    normalization = np.sum(ranks_cur < 100)
-    return np.sum((ranks_cur == ranks_rm) & (ranks_cur < 100)) / normalization
+    ranks_cur = stt.rankdata(cur_ap_rssi, method='dense'); ranks_cur[cur_ap_rssi < 100] = 0
+    ranks_rm = stt.rankdata(rm_rssi, method='dense'); ranks_rm[rm_rssi < 100] = 0
+    spearman_footrule = sum(abs(ranks_cur[cur_ap_rssi < 100] - ranks_rm[cur_ap_rssi < 100]))
+    return 1/(spearman_footrule + 1)
 
 if __name__== "__main__":
     training_data = pd.read_csv("sample_data/TrainingData.csv")
     validation_data = pd.read_csv("sample_data/ValidationData.csv")
     training_data = training_data.dropna().dropna(axis=1)
 
-    RSSI_RM = create_radio_map(training_data)
+    #RSSI_RM = create_radio_map(training_data)
 
-    AA = np.copy(RSSI_RM[:,:,11])
-    AA[np.isnan(AA)] = -100
-    plt.figure(figsize=(20,15))
-    plt.imshow(AA, vmin=-100, vmax=0)
+    wap_column_names = training_data.filter(regex=("WAP\d*")).columns
+
+    cur_scan_id = 100
+    cur_scan_gt = validation_data.iloc[cur_scan_id]
+    cur_scan_vals = cur_scan_gt[wap_column_names]
+    training_data["weights"] = training_data[wap_column_names].apply(lambda x: similarity_calculation(cur_scan_vals, x), axis=1)
+
+    tgb = training_data.groupby(["LONGITUDE", 'LATITUDE'])
+    weights_mean = tgb.agg({'weights': "mean", "LONGITUDE": "mean", 'LATITUDE': "mean"})
+
+    ranked_weights = stt.rankdata(training_data["weights"], method="ordinal")
+    best_matches = max(ranked_weights) - ranked_weights < 10
+
+    weighted_mean_lon = np.average(training_data.LONGITUDE[best_matches], weights=training_data["weights"][best_matches])
+    weighted_mean_lat = np.average(training_data.LATITUDE[best_matches], weights=training_data["weights"][best_matches])
+    error = np.sqrt((cur_scan_gt.LONGITUDE-weighted_mean_lon)**2 +
+                    (cur_scan_gt.LATITUDE-weighted_mean_lat)**2)
+    title_str = "SCAN_ID = " + str(cur_scan_id) + "\nError = " + str(np.round(error, 2)) + " [m]"
+
+    plt.figure()
+    plt.scatter(weights_mean.LONGITUDE, weights_mean.LATITUDE, c=weights_mean["weights"])
+    plt.colorbar()
+    plt.scatter(cur_scan_gt.LONGITUDE, cur_scan_gt.LATITUDE, c='r', marker='x')
+    plt.scatter(weighted_mean_lon, weighted_mean_lat, c='m', marker='*')
+    plt.title(title_str)
+    plt.xlabel("Longitude"); plt.ylabel("Latitude")
     plt.show()
