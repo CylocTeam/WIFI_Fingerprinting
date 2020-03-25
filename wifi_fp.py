@@ -47,56 +47,55 @@ def mean_relev_rssi (rssi_list):
     """
     return np.mean(rssi_list[rssi_list < 100])
 
-def similarity_calculation (cur_ap_rssi, rm_rssi):
+def similarity_calculation (cur_ap_rssi, df, p=1):
     """
     Calculate the similarity between 2 RSSI rank vectors
     :param ranks1: cur rssi vector that is compared
     :param ranks2: radiomap rssi vector
     :return:
     """
-    ranks_cur = stt.rankdata(cur_ap_rssi, method='dense'); ranks_cur[cur_ap_rssi < 100] = 0
-    ranks_rm = stt.rankdata(rm_rssi, method='dense'); ranks_rm[rm_rssi < 100] = 0
-    spearman_footrule = sum(abs(ranks_cur[cur_ap_rssi < 100] - ranks_rm[cur_ap_rssi < 100]))
-    return 1/(spearman_footrule + 1)
+
+    # TODO: find literature about weighting where not all AP's were seen. This causes issues here
+    df[np.isnan(df) & ~np.isnan(cur_ap_rssi)] = -200 # assumption about RSSI values that weren't found
+    weights = ((abs(df.sub(cur_ap_rssi, axis=1))**p).sum(axis=1))**(1/p)
+    weights[weights == 0] = np.nan
+    return 1 / weights
 
 if __name__== "__main__":
     training_data = pd.read_csv("sample_data/TrainingData.csv")
     validation_data = pd.read_csv("sample_data/ValidationData.csv")
-    training_data = training_data.dropna().dropna(axis=1)
-
-    #RSSI_RM = create_radio_map(training_data)
-
     wap_column_names = training_data.filter(regex=("WAP\d*")).columns
+
+    training_data[training_data[wap_column_names] == 100] = np.nan  # 100 indicates a nan
+    spatial_mean = np.mean(training_data[wap_column_names], axis=1)
+    training_data[wap_column_names] = training_data[wap_column_names].sub(spatial_mean, axis=0)  # spatial mean norm
+
+    validation_data[validation_data[wap_column_names] == 100] = np.nan  # 100 indicates a nan
+    v_spatial_mean = np.mean(validation_data[wap_column_names], axis=1)
+    validation_data[wap_column_names] = validation_data[wap_column_names].sub(v_spatial_mean, axis=0)  # spatial mean norm
 
     # Assuming we know the correct floor
     # TODO: add floor estimation
-    cur_scan_id = 100
+    cur_scan_id = 10
     cur_scan_gt = validation_data.iloc[cur_scan_id]
     cur_scan_vals = cur_scan_gt[wap_column_names]
     relev_training_data = training_data[training_data["FLOOR"] == cur_scan_gt["FLOOR"]]
+    weights = similarity_calculation(cur_scan_vals, relev_training_data[wap_column_names])
 
-    relev_training_data["weights"] = relev_training_data[wap_column_names].apply(
-        lambda x: similarity_calculation(cur_scan_vals, x), axis=1)
-
-    tgb = relev_training_data.groupby(["LONGITUDE", 'LATITUDE'])
-    weights_mean = tgb.agg({'weights': "mean", "LONGITUDE": "mean", 'LATITUDE': "mean"})
-
-    ranked_weights = stt.rankdata(relev_training_data["weights"], method="ordinal")
-    best_matches = max(ranked_weights) - ranked_weights < 10
-
-    weighted_mean_lon = np.average(relev_training_data.LONGITUDE[best_matches],
-                                   weights=relev_training_data["weights"][best_matches])
-    weighted_mean_lat = np.average(relev_training_data.LATITUDE[best_matches],
-                                   weights=relev_training_data["weights"][best_matches])
+    weighted_mean_lon = np.average(relev_training_data.LONGITUDE[~np.isnan(weights)],
+                                   weights=weights[~np.isnan(weights)])
+    weighted_mean_lat = np.average(relev_training_data.LATITUDE[~np.isnan(weights)],
+                                   weights=weights[~np.isnan(weights)])
     error = np.sqrt((cur_scan_gt.LONGITUDE-weighted_mean_lon)**2 +
                     (cur_scan_gt.LATITUDE-weighted_mean_lat)**2)
     title_str = "SCAN_ID = " + str(cur_scan_id) + "\nError = " + str(np.round(error, 2)) + " [m]"
 
     plt.figure()
-    plt.scatter(weights_mean.LONGITUDE, weights_mean.LATITUDE, c=weights_mean["weights"])
+    plt.scatter(relev_training_data.LONGITUDE, relev_training_data.LATITUDE, c=weights)
     plt.colorbar()
     plt.scatter(cur_scan_gt.LONGITUDE, cur_scan_gt.LATITUDE, c='r', marker='x')
     plt.scatter(weighted_mean_lon, weighted_mean_lat, c='m', marker='*')
     plt.title(title_str)
-    plt.xlabel("Longitude"); plt.ylabel("Latitude")
+    plt.xlabel("Local X"); plt.ylabel("Local Y")
+    plt.grid(alpha=0.3)
     plt.show()
