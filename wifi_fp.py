@@ -73,16 +73,21 @@ if __name__== "__main__":
     cur_scan_id = 100
     cur_scan_gt = validation_data.iloc[cur_scan_id]
     cur_scan_vals = cur_scan_gt[wap_column_names]
-    training_data["weights"] = training_data[wap_column_names].apply(lambda x: similarity_calculation(cur_scan_vals, x), axis=1)
+    relev_training_data = training_data[training_data["FLOOR"] == cur_scan_gt["FLOOR"]]
 
-    tgb = training_data.groupby(["LONGITUDE", 'LATITUDE'])
+    relev_training_data["weights"] = relev_training_data[wap_column_names].apply(
+        lambda x: similarity_calculation(cur_scan_vals, x), axis=1)
+
+    tgb = relev_training_data.groupby(["LONGITUDE", 'LATITUDE'])
     weights_mean = tgb.agg({'weights': "mean", "LONGITUDE": "mean", 'LATITUDE': "mean"})
 
-    ranked_weights = stt.rankdata(training_data["weights"], method="ordinal")
+    ranked_weights = stt.rankdata(relev_training_data["weights"], method="ordinal")
     best_matches = max(ranked_weights) - ranked_weights < 10
 
-    weighted_mean_lon = np.average(training_data.LONGITUDE[best_matches], weights=training_data["weights"][best_matches])
-    weighted_mean_lat = np.average(training_data.LATITUDE[best_matches], weights=training_data["weights"][best_matches])
+    weighted_mean_lon = np.average(relev_training_data.LONGITUDE[best_matches],
+                                   weights=relev_training_data["weights"][best_matches])
+    weighted_mean_lat = np.average(relev_training_data.LATITUDE[best_matches],
+                                   weights=relev_training_data["weights"][best_matches])
     error = np.sqrt((cur_scan_gt.LONGITUDE-weighted_mean_lon)**2 +
                     (cur_scan_gt.LATITUDE-weighted_mean_lat)**2)
     title_str = "SCAN_ID = " + str(cur_scan_id) + "\nError = " + str(np.round(error, 2)) + " [m]"
