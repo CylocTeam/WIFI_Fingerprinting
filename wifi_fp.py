@@ -3,11 +3,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.stats as stt
 
+# TODO: change RM to consider difference floors
+# TODO: receive RM (x,y) from outside
 def create_radio_map(training_data):
     """
-
-    :param training_data:
-    :return:
+    Get training data from difference devices (location + all APS RSSI) and creates a RadioMap
+    :param training_data: Dataframe containing reference locations + RSSI
+    :return: Radio Map (numpy array)
     """
     # grid data
     lon_min = min(training_data.LONGITUDE)
@@ -37,6 +39,12 @@ def create_radio_map(training_data):
     return RSSI_RM
 
 def mean_relev_rssi (rssi_list):
+    """
+    removes the non-relevant RSSI values (nans, i.e. RSSI=100) and returns the average
+    functionized for out comfort.
+    :param rssi_list: RSSI value list
+    :return: average RSSI value, without nans (=100)
+    """
     return np.mean(rssi_list[rssi_list < 100])
 
 def similarity_calculation (cur_ap_rssi, rm_rssi):
@@ -60,6 +68,8 @@ if __name__== "__main__":
 
     wap_column_names = training_data.filter(regex=("WAP\d*")).columns
 
+    # Assuming we know the correct floor
+    # TODO: add floor estimation
     cur_scan_id = 100
     cur_scan_gt = validation_data.iloc[cur_scan_id]
     cur_scan_vals = cur_scan_gt[wap_column_names]
