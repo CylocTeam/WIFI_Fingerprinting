@@ -28,6 +28,7 @@ if __name__ == "__main__":
     relev_training_data = rm_per_area[cur_bid, cur_floor]
     weights = sm.similarity_calculation(cur_scan_vals, relev_training_data[wap_column_names])
 
+    # TODO: fix location estimation via RM
     weighted_mean_lon = np.average(relev_training_data.x[~np.isnan(weights)],
                                    weights=weights[~np.isnan(weights)])
     weighted_mean_lat = np.average(relev_training_data.y[~np.isnan(weights)],
