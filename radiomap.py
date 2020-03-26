@@ -1,49 +1,80 @@
 import numpy as np
+import pandas as pd
 
 
-# TODO: change RM to consider difference floors
-# TODO: receive RM (x,y) from outside
-def create_radio_map(training_data):
+def create_radio_map(training_data, grid_size=(1, 1)):
     """
-    Get training data from difference devices (location + all APS RSSI) and creates a RadioMap
-    :param training_data: Dataframe containing reference locations + RSSI
-    :return: Radio Map (numpy array)
+    Create radiomap for each area in training data dataset. Each area will contain a unique (building_id, floor) key
+    RM will be in form of a DataFrame with grid indices as index, and columns (x,y,WAPXXX...) with the average RSSI value
+    for each AP in each (x,y).
+    Function also returns a dictionary contatining a list of all APs in each area.
+    :param training_data: DataFrame containing data to train RM with
+    :param grid_size: tuple (dx,dy) of grid size in (x,y) direction
+    :return: (rm_per_area, aps_per_area): dictionaries with keys (building_id, floor), containing the RM and AP of each area.
     """
-    # grid data
-    lon_min = min(training_data.LONGITUDE)
-    lon_max = max(training_data.LONGITUDE)
-    lat_min = min(training_data.LATITUDE)
-    lat_max = max(training_data.LATITUDE)
-
-    grid_anchor = [lon_min, lat_min]
-    grid_size = [int(lon_max-lon_min)+1, int(lat_max-lat_min)+1]
-
     wap_column_names = training_data.filter(regex=("WAP\d*")).columns
-    num_of_wap = len(wap_column_names)
-    agg_list = {i: mean_relev_rssi for i in wap_column_names}
+    unique_areas = training_data[["BUILDINGID", "FLOOR"]].drop_duplicates()
+    rm_per_area, aps_per_area = {}, {}
+    for area in unique_areas.values:
+        building_id, floor = area
+        cur_training_data = training_data.loc[(training_data[["BUILDINGID", "FLOOR"]] == area).all(axis=1)]
+        grid_x, grid_y = get_grid_edges(cur_training_data, grid_size)
+        rcpt_aps = wap_column_names[(~np.isnan(cur_training_data[wap_column_names])).any(axis=0)]
+        cur_rm = get_radiomap_at(cur_training_data, (grid_x, grid_y, grid_size))
+        rm_per_area[building_id, floor], aps_per_area[building_id, floor] = cur_rm, rcpt_aps
+    return rm_per_area, aps_per_area
 
-    # create radiomap
-    RSSI_RM = np.full((grid_size[0], grid_size[1], num_of_wap,), np.nan)
 
-    # find mean RSSI value for each WAP for each grid point
-    training_data["grid_pnt"] = tuple(map(lambda p: [int(p[0]-grid_anchor[0]), int(p[1]-grid_anchor[1])],
-                                          zip(training_data.LONGITUDE, training_data.LATITUDE)))
+def get_radiomap_at(training_data, grid):
+    """
+    Create radiomap in a specific extent, using training_data
+    :param training_data: DataFrame containing data to train RM with
+    :param grid: tuple (grid_lon, grid_lat, grid_size) = ([grid_min_lon, grid_max_lon], [grid_min_lat, grid_max_lat], (dx,dy))
+    :return: Dataframe containing RM in the specified extent
+    """
+    wap_column_names = training_data.filter(regex=("WAP\d*")).columns
+    grid_lon, grid_lat, grid_size = grid
+    grid_anchor = [min(grid_lon), min(grid_lat)]
+    GX, GY = np.meshgrid(np.arange(grid_lon[0], grid_lon[1], grid_size[0]),
+                                 np.arange(grid_lat[0], grid_lat[1], grid_size[1]))
+    grid_x, grid_y = np.int_(GX.flatten()), np.int_(GY.flatten())
+    indices = coordinates_to_indices(grid_x, grid_y, grid_anchor, grid_size)
+
+    RSSI_RM = pd.DataFrame(data={'x': grid_x, 'y': grid_y}, index=indices)
+    for name in wap_column_names:
+        RSSI_RM[name] = np.nan
+
+    # each grid point will get the average measured RSSI value for each AP
+    training_data.insert(0, "grid_pnt",coordinates_to_indices(training_data["LONGITUDE"], training_data["LATITUDE"], grid_anchor, grid_size))
     training_data_gridgroups = training_data.groupby(by="grid_pnt")
-    training_data_agg = training_data_gridgroups.agg(agg_list)
+    training_data_agg = training_data_gridgroups.agg({i: np.mean for i in wap_column_names})
 
-    # Update RM via the training data
-    grid_pnt_list = list(zip(*training_data_agg.index.to_list()))
-    RSSI_RM[grid_pnt_list[0], grid_pnt_list[1], :] = training_data_agg[wap_column_names].to_numpy()
+    RSSI_RM.loc[training_data_agg.index, wap_column_names] = training_data_agg[wap_column_names]
     return RSSI_RM
 
 
-def mean_relev_rssi (rssi_list):
+def coordinates_to_indices(x, y, grid_anchor, grid_size):
     """
-    removes the non-relevant RSSI values (nans, i.e. RSSI=100) and returns the average
-    functionized for out comfort.
-    :param rssi_list: RSSI value list
-    :return: average RSSI value, without nans (=100)
+    turn a list of coordinates into indices
+    :param x: list of x values
+    :param y: list of y values
+    :param grid_anchor: (x0, y0) tuple containing the anchor point of the grid
+    :param grid_size: (dx,dy) tuple containing the size of the grid in x,y directions
+    :return: list of tuples containing the (x_ind,y_ind) of each coordinate couple
     """
-    return np.mean(rssi_list[rssi_list < 100])
+    return list(zip(*(np.int_((x-grid_anchor[0])/grid_size[0]), np.int_((y-grid_anchor[1])/grid_size[1]))))
 
 
+def get_grid_edges(cur_training_data, grid_size):
+    """
+    get the edges of the grid specificed by training data.
+    the edges are the exntent where we actually have data points + small safety window
+    :param cur_training_data: DataFrame containing data coordinates
+    :param grid_size: (dx,dy) tuple containing the size of the grid in x,y directions
+    :return: [grid_min_lon, grid_max_lon], [grid_min_lat, grid_max_lat]
+    """
+    min_x = np.min(cur_training_data.LONGITUDE) - grid_size[0]
+    max_x = np.max(cur_training_data.LONGITUDE) + grid_size[0]
+    min_y = np.min(cur_training_data.LATITUDE) - grid_size[1]
+    max_y = np.max(cur_training_data.LATITUDE) + grid_size[1]
+    return [min_x, max_x], [min_y, max_y]
