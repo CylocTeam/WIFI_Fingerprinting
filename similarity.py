@@ -23,8 +23,8 @@ def similarity_calculation (cur_ap_rssi, df, p=1):
     :return: Series containing weight value for each grid point
     """
 
-    # TODO: find literature about weighting where not all AP's were seen. This causes issues here
-    df = df.mask(np.isnan(df) & ~np.isnan(cur_ap_rssi), -200) # assumption about RSSI values that weren't found
+    # TODO: find a good similarty metric in the literature
     weights = ((abs(df.sub(cur_ap_rssi, axis=1))**p).sum(axis=1))**(1/p)
-    weights[weights == 0] = np.nan
+    weights[np.isnan(df).all(axis=1)] = np.nan
     return 1 / weights
+
