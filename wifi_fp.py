@@ -4,20 +4,29 @@ import matplotlib.pyplot as plt
 import similarity as sm
 import radiomap as rm
 
+
+def initial_data_processing(df):
+    """
+
+    :param df:
+    :return:
+    """
+    wap_column_names = df.filter(regex=("WAP\d*")).columns
+    df[df[wap_column_names] == 100] = -100  # 100 indicates an AP that wasn't detected
+    spatial_mean = np.mean(df[wap_column_names], axis=1)
+    df[wap_column_names] = df[wap_column_names].sub(spatial_mean, axis=0)  # spatial mean normalization
+    return df
+
+
 if __name__ == "__main__":
     training_data = pd.read_csv("sample_data/TrainingData.csv")
     validation_data = pd.read_csv("sample_data/ValidationData.csv")
     wap_column_names = training_data.filter(regex=("WAP\d*")).columns
 
-    training_data[training_data[wap_column_names] == 100] = np.nan  # 100 indicates a nan
-    spatial_mean = np.mean(training_data[wap_column_names], axis=1)
-    training_data[wap_column_names] = training_data[wap_column_names].sub(spatial_mean, axis=0)  # spatial mean norm
+    training_data = initial_data_processing(training_data)
+    validation_data = initial_data_processing(validation_data)
 
     rm_per_area, aps_per_area = rm.create_radio_map(training_data, [1, 1])
-
-    validation_data[validation_data[wap_column_names] == 100] = np.nan  # 100 indicates a nan
-    v_spatial_mean = np.mean(validation_data[wap_column_names], axis=1)
-    validation_data[wap_column_names] = validation_data[wap_column_names].sub(v_spatial_mean, axis=0)  # spatial mean norm
 
     # Assuming we know the correct floor
     # TODO: add floor estimation
