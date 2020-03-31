@@ -56,6 +56,19 @@ def match_lines_to_clusters(df, cluster_data):
         ap_clusts[ap] = ap_clst
     return pd.DataFrame(ap_clusts, index=df.index)
 
+# TODO: shorten runtime of thie function
+def find_lines_fingerprints(df, fb_df):
+    wap_column_names = fb_df.filter(regex=("WAP\d*")).columns
+    fb_num_of_nan = np.isnan(fb_df[wap_column_names]).sum(axis=1)
+    df_lines_fp = pd.Series(np.nan, index=df.index)
+    for index, row in df.iterrows():
+        row_relev = row[~np.isnan(row)].index
+        fp_cmp = (row[row_relev] == fb_df[row_relev]).all(axis=1)  & (fb_num_of_nan == (len(row) - len(row_relev)))
+        if not fp_cmp.any():
+            continue
+        df_lines_fp.loc[index] = fp_cmp[fp_cmp].index[0]
+    return df_lines_fp
+
 
 def wifi_log_data_parser(file):
     """

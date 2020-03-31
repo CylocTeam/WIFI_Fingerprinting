@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import similarity as sm
 import radiomap as rm
 import unsupervised as usp
+import scipy.spatial.distance as dist
 
 def initial_data_processing(df):
     """
@@ -27,11 +28,19 @@ if __name__ == "__main__":
     validation_data = initial_data_processing(validation_data)
 
     clusters_data = usp.cluster_training_data(training_data, NR=2, min_density=200)
-    fwb = usp.create_fingerprint_wb(training_data, clusters_data, NR=2)
+    fwb = usp.create_fingerprint_wb(training_data, clusters_data)
+
+    gt_clst = usp.match_lines_to_clusters(validation_data, clusters_data)
+    gtm = usp.find_lines_fingerprints(gt_clst, fwb)
+
+    td_clst = usp.match_lines_to_clusters(validation_data, clusters_data)
+    tdm = usp.find_lines_fingerprints(td_clst, fwb)
+
+    tdm_no_nan = tdm[~np.isnan(tdm)]
+
 
     # Assuming we know the correct floor
-    cur_scan_id = 10
-    cur_scan_gt = validation_data.iloc[cur_scan_id]
-    cur_scan_vals, cur_bid, cur_floor = cur_scan_gt[wap_column_names], cur_scan_gt["BUILDINGID"], cur_scan_gt["FLOOR"]
-
+    # cur_scan_id = 10
+    # cur_scan_gt = validation_data.iloc[cur_scan_id]
+    # cur_scan_vals, cur_bid, cur_floor = cur_scan_gt[wap_column_names], cur_scan_gt["BUILDINGID"], cur_scan_gt["FLOOR"]
 
