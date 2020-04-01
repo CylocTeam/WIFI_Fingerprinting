@@ -1,5 +1,6 @@
 import numpy as np
 import scipy.stats as stt
+import pandas as pd
 
 def similarity_calc_rank(cur_ap_rssi, rm_rssi):
     """
@@ -22,9 +23,8 @@ def similarity_calculation (cur_ap_rssi, df, p=1):
     :param ranks2: radiomap rssi dataframe containing WAP RSSI values for each grid point
     :return: Series containing weight value for each grid point
     """
-
-    # TODO: find a good similarty metric in the literature
-    weights = ((abs(df.sub(cur_ap_rssi, axis=1))**p).sum(axis=1))**(1/p)
-    weights[np.isnan(df).all(axis=1)] = np.nan
-    return 1 / weights
+    c, d = cur_ap_rssi.to_numpy(), df.to_numpy()
+    weights = np.nansum(abs((d - c)**p), axis=1) ** (1/p)
+    weights[np.isnan(d).all(axis=1)] = np.nan
+    return pd.Series(1 / weights, index=df.index)
 
