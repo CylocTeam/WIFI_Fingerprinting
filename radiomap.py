@@ -5,11 +5,11 @@ import pandas as pd
 class RadioMap:
     def __init__(self, training_data, grid_size=(1,1), building=np.nan, floor=np.nan):
         grid_x, grid_y = get_grid_edges(training_data, grid_size)
-        self.grid_anchor = (grid_x[0], grid_y[0])
+        self.grid_anchor = grid_anchor = (grid_x[0], grid_y[0])
         self.grid_size = grid_size
         self.extent = grid_x + grid_y
-        self.map_size = [int((np.diff(grid_x)/grid_size[0])), int((np.diff(grid_y)/grid_size[1]))]
-        self.radiomaps = get_radiomap_dict(training_data, (grid_x, grid_y, grid_size))
+        self.map_size = map_size = [int((np.diff(grid_y)/grid_size[1])), int((np.diff(grid_x)/grid_size[0]))]
+        self.radiomaps = get_radiomap_dict(training_data, (grid_anchor, map_size, grid_size))
         self.building = building
         self.floor = floor
 
@@ -84,9 +84,7 @@ def get_radiomap_dict(training_data, grid):
     wap_column_names = training_data.filter(regex=("WAP\d*")).columns
     relev_aps = wap_column_names[(~np.isnan(training_data[wap_column_names])).any(axis=0)]
     radiomap_dict = {}
-    grid_lon, grid_lat, grid_size = grid
-    grid_anchor = (grid_lon[0], grid_lat[0])
-    rm_size = [int(np.ceil(x)) for x in [np.diff(grid_lon)/grid_size[0], np.diff(grid_lat)/grid_size[1]]]
+    grid_anchor, rm_size, grid_size = grid
 
     # find average rssi values for each AP in each point in space
     trn_indices = coordinates_to_indices(training_data["LONGITUDE"], training_data["LATITUDE"], grid_anchor, grid_size)
@@ -100,7 +98,7 @@ def get_radiomap_dict(training_data, grid):
         relev_agg = training_data_agg[~np.isnan(training_data_agg[cur_ap])]
 
         ind_x, ind_y = list(zip(*relev_agg.index))
-        cur_rm[ind_x, ind_y] = relev_agg[cur_ap].tolist()
+        cur_rm[ind_y, ind_x] = relev_agg[cur_ap].tolist()
         radiomap_dict[cur_ap] = cur_rm
 
     return radiomap_dict
