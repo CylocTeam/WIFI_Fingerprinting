@@ -28,10 +28,11 @@ def similarity_calculation (cur_ap_rssi, df, p=1):
     weights[np.isnan(d).all(axis=1)] = np.nan
     return pd.Series(1 / weights, index=df.index)
 
+
 def rm_similarity_calculation (cur_ap_rssi, rm, p=1):
     c = cur_ap_rssi.to_numpy()
     cc = c.reshape((-1,) + (1,) * (rm.ndim - 1))
     weights_map = (np.nansum(abs(rm - cc) ** p, axis=0)) ** (1 / p)
     weights_map[weights_map == 0] = np.nan
-    return weights_map
-
+    weights_map[np.any(np.isnan(rm), axis=0)] = np.nan
+    return 1/weights_map

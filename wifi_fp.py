@@ -41,7 +41,7 @@ def interpolate_group(df, amount=1):
 
 def wknn_find_location(weights, xx, yy, K):
     W = np.nan_to_num(weights, nan=0)
-    Y,X = np.meshgrid(yy,xx)
+    X,Y = np.meshgrid(xx, yy)
     w, x, y = W.flatten(), X.flatten(), Y.flatten()
 
     # find top K elements
@@ -51,57 +51,38 @@ def wknn_find_location(weights, xx, yy, K):
     return wx,wy
 
 
-def calculate_line_location(line, rm_per_area, qtile=0.95):
+def calculate_line_location(line, rm_per_area, qtile=0.95, plot_flag=False):
     cur_bid, cur_floor = line["BUILDINGID"], line["FLOOR"]
     wap_column_names = line.filter(regex=("WAP\d*")).index
     relev_aps = wap_column_names[~np.isnan(row[wap_column_names])]
     radiomap = rm_per_area[cur_bid, cur_floor]
 
     rm_rssi = radiomap.get_ap_maps_ndarray(relev_aps)
-    weights = sm.rm_similarity_calculation(line[relev_aps], rm_rssi)
+    weights = sm.rm_similarity_calculation(line[relev_aps], rm_rssi, p=2)
     xx, yy = radiomap.get_map_ranges()
 
     weights_qtile = np.nanquantile(weights, qtile)
-    num_of_elem = np.sum(weights >=weights_qtile)
+    num_of_elem = np.sum(weights[~np.isnan(weights)] >= weights_qtile)
     if num_of_elem == 0:
-        return np.nan, np.nan, np.nan, np.nan
+        return np.nan, np.nan, np.nan
 
     wmx, wmy = wknn_find_location(weights, xx, yy, num_of_elem)
     error = np.linalg.norm([line.LONGITUDE - wmx, line.LATITUDE - wmy])
 
-    return weights, wmx, wmy, error
+    if plot_flag:
+        plt.figure()
+        plt.imshow(weights, extent=radiomap.extent, origin="lower")
+        plt.scatter(line.LONGITUDE, line.LATITUDE, c="r", marker="x")
+        plt.scatter(wmx, wmy, c="m", marker="*")
+        plt.grid()
+        plt.xlabel("Longitude")
+        plt.ylabel("Latitude")
+        plt.title('Validation results for 1-metric\nError = ' + str(round(error, 2)) + ' [m]\n' +
+                  "BID = " + str(cur_bid) + ", FLOOR = " + str(cur_floor))
+        plt.colorbar()
+        plt.show()
 
-
-def plot_line_calculation(line, rm_per_area, qtile=0.95):
-    cur_bid, cur_floor = line["BUILDINGID"], line["FLOOR"]
-    wap_column_names = line.filter(regex=("WAP\d*")).index
-    relev_aps = wap_column_names[~np.isnan(row[wap_column_names])]
-    radiomap = rm_per_area[cur_bid, cur_floor]
-
-    rm_rssi = radiomap.get_ap_maps_ndarray(relev_aps)
-    weights = sm.rm_similarity_calculation(line[relev_aps], rm_rssi)
-    xx, yy = radiomap.get_map_ranges()
-
-    weights_qtile = np.nanquantile(weights, qtile)
-    num_of_elem = np.sum(weights >= weights_qtile)
-    if num_of_elem == 0:
-        return np.nan, np.nan, np.nan, np.nan
-
-    wmx, wmy = wknn_find_location(weights, xx, yy, num_of_elem)
-    error = np.linalg.norm([line.LONGITUDE - wmx, line.LATITUDE - wmy])
-
-    plt.figure()
-    plt.imshow(weights, extent=radiomap.extent, origin="lower")
-    plt.scatter(line.LONGITUDE, line.LATITUDE, c="r", marker="x")
-    plt.scatter(wmx, wmy, c="m", marker="*")
-    plt.grid()
-    plt.xlabel("Longitude")
-    plt.ylabel("Latitude")
-    plt.title('Validation results for 1-metric\n90% error at ' + str(round(error, 2)) + ' [m]\n' +
-              "BID: " + str(cur_bid) + ", FLOOR: " + str(cur_floor))
-    plt.colorbar()
-    plt.show()
-    DEBUG = 1
+    return wmx, wmy, error
 
 
 if __name__ == "__main__":
@@ -118,21 +99,20 @@ if __name__ == "__main__":
 
     validation_results = pd.DataFrame(np.nan, columns=('FPx', 'FPy', 'error'), index=validation_data.index)
     for index, row in validation_data.iterrows():
-        _, cur_x, cur_y, cur_error = calculate_line_location(row, rm_per_area, qtile=0.95)
+        cur_x, cur_y, cur_error = calculate_line_location(row, rm_per_area, qtile=0.95)
         validation_results.loc[index, ['FPx', 'FPy', 'error']] = [cur_x, cur_y, cur_error]
     verrors = validation_results.error[~np.isnan(validation_results.error)]
 
-
-    error_90 = np.quantile(verrors, 0.9)
-    error_med = np.median(verrors)
+    error_90 = round(np.quantile(verrors, 0.9))
+    error_med = round(np.median(verrors, axis=None), 2)
     fig, ax = plt.subplots(figsize=(8, 4))
     ax.hist(verrors, 100, density=True, histtype='step', cumulative=True)
     plt.xlabel('Error [m]')
     plt.ylabel('Percentile')
-    plt.title('Validation results for 1-metric\n90% error at ' + str(round(error_90, 2)) + ' [m]\n'+
-              'Median error at ' + str(round(error_med, 2)) + '[m]')
+    plt.title('Validation results for 1-metric\n90% error at ' + str(error_90) + ' [m]\n'+
+              'Median error at ' + str(error_med) + '[m]')
     plt.grid()
     plt.show()
 
-    for ii in validation_results[validation_results.error > 40].index:
-        plot_line_calculation(validation_data.loc[ii], rm_per_area)
+    for ii in validation_results.index:
+        calculate_line_location(validation_data.loc[ii], rm_per_area, plot_flag=True)
