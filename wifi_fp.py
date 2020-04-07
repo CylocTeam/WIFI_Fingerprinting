@@ -7,9 +7,9 @@ import radiomap as rm
 
 def initial_data_processing(df):
     """
-
-    :param df:
-    :return:
+    initial procession of data (normalization + missing APs replacing)
+    :param df: Dataframe with data to process
+    :return: Dataframe with processed data
     """
     wap_column_names = df.filter(regex=("WAP\d*")).columns
     df[df[wap_column_names] == 100] = np.nan  # 100 indicates an AP that wasn't detected
@@ -18,6 +18,8 @@ def initial_data_processing(df):
     df[wap_column_names] = df[wap_column_names].sub(spatial_mean, axis=0) # spatial mean normalization
     return df
 
+
+# intepolation functions... didn't seem relevant, considering the path we're going to take with the project
 
 def interpolate_training_data(training_set, amount=1):
     grp = training_set.groupby(["BUILDINGID", "FLOOR", "PHONEID"])
@@ -40,11 +42,20 @@ def interpolate_group(df, amount=1):
 
 
 def wknn_find_location(weights, xx, yy, K):
+    """
+    Estimate the location Weighted K Nearest Neighbor wise, according to weights in the similarity map
+    A simple weighted means of K top elements
+    :param weights: (NxM) array of similarity weights
+    :param xx: (1xN) array of x-values
+    :param yy: (1xM) array of y-values
+    :param K: number of elements to add into the calculation
+    :return: (x,y) estimated location
+    """
     W = np.nan_to_num(weights, nan=0)
     X,Y = np.meshgrid(xx, yy)
     w, x, y = W.flatten(), X.flatten(), Y.flatten()
 
-    # find top K elements
+    # find top K elements and return their weighted mean
     selem_ind = w.argsort(axis=None)[-K:] # biggest K elem indices
     wx = np.average(x[selem_ind], weights=w[selem_ind])
     wy = np.average(y[selem_ind], weights=w[selem_ind])
@@ -52,6 +63,15 @@ def wknn_find_location(weights, xx, yy, K):
 
 
 def calculate_line_location(line, rm_per_area, qtile=0.95, plot_flag=False):
+    """
+    Perform a localization (WKNN-wise) on a specific line in the validation set.
+    If plot_flag is specificed, also plot the data into a figure
+    :param line: current line containing validation (RSSI values, location, building an floor IDs)
+    :param rm_per_area: dictionary containing all radiomaps with (BID, FLOORID) as key
+    :param qtile: quantile of weights to use of WKNN
+    :param plot_flag: if specified as True, data will be plotted into a figure
+    :return: estimated location and error, (x,y,error)
+    """
     cur_bid, cur_floor = line["BUILDINGID"], line["FLOOR"]
     wap_column_names = line.filter(regex=("WAP\d*")).index
     relev_aps = wap_column_names[~np.isnan(row[wap_column_names])]

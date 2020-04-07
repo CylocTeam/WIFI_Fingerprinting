@@ -30,6 +30,13 @@ def similarity_calculation (cur_ap_rssi, df, p=1):
 
 
 def rm_similarity_calculation (cur_ap_rssi, rm, p=1):
+    """
+    calculate the p-norm similarity between an rssi vector and radiomap
+    :param cur_ap_rssi: vector including the current RSSI data to compare to the radiomap (array of 1xN)
+    :param rm: radiomap containing fingerprint data (narray of A x B x N)
+    :param p: norm parameter
+    :return: narray of size (AxB) with similarity value at each point of the radiomap
+    """
     c = cur_ap_rssi.to_numpy()
     cc = c.reshape((-1,) + (1,) * (rm.ndim - 1))
     weights_map = (np.nansum(abs(rm - cc) ** p, axis=0)) ** (1 / p)
