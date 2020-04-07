@@ -16,7 +16,7 @@ def initial_data_processing(df):
     spatial_mean = np.mean(df[wap_column_names], axis=1)
     # spatial_std = np.std(df[wap_column_names], axis=1)
     df[wap_column_names] = df[wap_column_names].sub(spatial_mean, axis=0) # spatial mean normalization
-    df[np.isnan(df[wap_column_names])] = df[wap_column_names].min(numeric_only=True).min()
+    # df[np.isnan(df[wap_column_names])] = df[wap_column_names].min(numeric_only=True).min()
     return df
 
 

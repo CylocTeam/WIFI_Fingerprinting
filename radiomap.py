@@ -115,15 +115,30 @@ def get_radiomap_dict(training_data, grid):
     training_data.insert(0, "grid_pnt", trn_indices)
     training_data_gridgroups = training_data.groupby(by="grid_pnt")
     training_data_agg = training_data_gridgroups.agg({i: np.nanmean for i in relev_aps})
+    training_data_agg_loc = training_data_gridgroups.agg({i: np.nanmean for i in ['LONGITUDE','LATITUDE']})
 
     # create a RM for each AP and insert it into the dictionary
     for cur_ap in relev_aps:
         cur_rm = np.full(rm_size, np.nan)
         relev_agg = training_data_agg[~np.isnan(training_data_agg[cur_ap])]
+        relev_agg_loc = training_data_agg_loc[~np.isnan(training_data_agg[cur_ap])]
 
+        mean_rssi_vec = relev_agg[cur_ap].tolist()
         ind_x, ind_y = list(zip(*relev_agg.index))
-        cur_rm[ind_y, ind_x] = relev_agg[cur_ap].tolist()
-        radiomap_dict[cur_ap] = cur_rm
+        cur_rm[ind_y, ind_x] = mean_rssi_vec
+
+        radiomap_dict[cur_ap] = {'RSSI_map': [], 'loc_vec': [], 'cov_inv': []}
+        radiomap_dict[cur_ap]['RSSI_map'] = cur_rm
+        radiomap_dict[cur_ap]['loc_vec'] = relev_agg_loc  # [lon, lat]
+        radiomap_dict[cur_ap]['cov_inv'] = calc_covinv(mean_rssi_vec)
 
     return radiomap_dict
 
+
+def calc_covinv(rssi_vec):
+    N = len(rssi_vec)
+    mean_rssi = np.mean(rssi_vec, 0)
+    rssi_norm = np.expand_dims(rssi_vec - mean_rssi, axis=1)
+    cov_inv = N * np.linalg.inv(np.dot(rssi_norm, rssi_norm.transpose()))
+
+    return cov_inv
