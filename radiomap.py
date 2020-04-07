@@ -59,6 +59,19 @@ class RadioMap:
         return np.dstack(radio_list)
 
 
+    def interpolate(self, method='kernel'):
+        """ method interpolates each rm for each AP using one of methods below:
+            kernel - gaussian / gamma
+            linear
+        """
+        for rm in self.radiomaps.items():
+    # find unutilized indices -> locations
+    # stack to vector - S*
+    # retrieve y from rm dict
+    # calc: K(S*,S*),K(S*,S) using also hyperparameters, and retrieve K^-1(S,S) from rm['cov_inv']
+    # rssi_hat ~ N( K(S*,S)K(S,S)^-1 * y , ...)
+    # todo - complete function
+
 def create_radiomap_objects(training_data, grid_size=(1, 1)):
     unique_areas = training_data[["BUILDINGID", "FLOOR"]].drop_duplicates()
     rm_per_area = {}
