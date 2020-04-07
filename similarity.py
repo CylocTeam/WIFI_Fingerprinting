@@ -38,8 +38,9 @@ def rm_similarity_calculation (cur_ap_rssi, rm, p=1):
     :return: narray of size (AxB) with similarity value at each point of the radiomap
     """
     c = cur_ap_rssi.to_numpy()
-    cc = c.reshape((-1,) + (1,) * (rm.ndim - 1))
-    weights_map = (np.nansum(abs(rm - cc) ** p, axis=0)) ** (1 / p)
+    c_shft = np.moveaxis(c.reshape((-1,) + (1,) * (rm.ndim - 1)), 0, -1)
+    cc = c_shft.repeat(np.size(rm, axis=0), axis=0).repeat(np.size(rm, axis=1), axis=1)
+    weights_map = (np.nansum(abs(rm - cc) ** p, axis=2)) ** (1 / p)
     weights_map[weights_map == 0] = np.nan
-    weights_map[np.any(np.isnan(rm), axis=0)] = np.nan
+    weights_map[np.any(np.isnan(rm), axis=2)] = np.nan
     return 1/weights_map

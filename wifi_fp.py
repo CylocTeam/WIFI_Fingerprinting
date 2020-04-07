@@ -14,8 +14,9 @@ def initial_data_processing(df):
     wap_column_names = df.filter(regex=("WAP\d*")).columns
     df[df[wap_column_names] == 100] = np.nan  # 100 indicates an AP that wasn't detected
     spatial_mean = np.mean(df[wap_column_names], axis=1)
-    spatial_std = np.std(df[wap_column_names], axis=1)
+    # spatial_std = np.std(df[wap_column_names], axis=1)
     df[wap_column_names] = df[wap_column_names].sub(spatial_mean, axis=0) # spatial mean normalization
+    df[np.isnan(df[wap_column_names])] = df[wap_column_names].min(numeric_only=True).min()
     return df
 
 
@@ -112,7 +113,7 @@ if __name__ == "__main__":
     training_data = training_data.drop(columns=["RELATIVEPOSITION", "USERID", "SPACEID"])
 
     training_data = initial_data_processing(training_data)
-    training_data = interpolate_training_data(training_data,amount=2)
+    training_data = interpolate_training_data(training_data, amount=3)
     validation_data = initial_data_processing(validation_data)
 
     rm_per_area = rm.create_radiomap_objects(training_data, [2, 2])

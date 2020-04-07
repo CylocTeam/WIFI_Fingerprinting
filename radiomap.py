@@ -56,7 +56,7 @@ class RadioMap:
                 radio_list.append(self.radiomaps[ap])
             else:
                 radio_list.append(np.full(self.map_size, np.nan))
-        return np.array(radio_list)
+        return np.dstack(radio_list)
 
 
 def create_radiomap_objects(training_data, grid_size=(1, 1)):
