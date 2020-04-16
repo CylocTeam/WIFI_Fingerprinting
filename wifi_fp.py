@@ -13,14 +13,31 @@ def initial_data_processing(df):
     """
     wap_column_names = df.filter(regex=("WAP\d*")).columns
     df[df[wap_column_names] == 100] = np.nan  # 100 indicates an AP that wasn't detected
-    spatial_mean = np.mean(df[wap_column_names], axis=1)
+    # spatial_mean = np.mean(df[wap_column_names], axis=1)
     # spatial_std = np.std(df[wap_column_names], axis=1)
-    df[wap_column_names] = df[wap_column_names].sub(spatial_mean, axis=0) # spatial mean normalization
-    df[np.isnan(df[wap_column_names])] = df[wap_column_names].min(numeric_only=True).min()
+    # df[wap_column_names] = df[wap_column_names].sub(spatial_mean, axis=0) # spatial mean normalization
+    # df[np.isnan(df[wap_column_names])] = df[wap_column_names].min(numeric_only=True).min()
+
+    # group by device ID
+    pid_grp = df.groupby(["PHONEID"])
+    phone_nrm = pd.DataFrame()
+    phone_nrm["min"] = pid_grp.agg({cn: np.nanmin for cn in wap_column_names}).min(axis=1)
+    phone_nrm["std"] = pid_grp.agg({cn: rayleigh_dist_std for cn in wap_column_names}).sum(axis=1)
+    df[wap_column_names] = df[wap_column_names].subtract(phone_nrm["min"].loc[df["PHONEID"]].values, axis=0)
+    df[wap_column_names] = df[wap_column_names].divide(phone_nrm["std"].loc[df["PHONEID"]].values, axis=0)
     return df
 
 
-# intepolation functions... didn't seem relevant, considering the path we're going to take with the project
+def rayleigh_dist_std(df):
+    """
+    ML estimation of Rayleigh standard deviation (biased)
+    :param df:
+    :return:
+    """
+    if len(df) == 0:
+        return np.Inf
+    return np.sqrt((df ** 2).sum() / (2 * len(df)))
+
 
 def interpolate_training_data(training_set, amount=1):
     grp = training_set.groupby(["BUILDINGID", "FLOOR", "PHONEID"])
@@ -93,6 +110,7 @@ def calculate_line_location(line, rm_per_area, qtile=0.95, plot_flag=False):
     if plot_flag:
         plt.figure()
         plt.imshow(weights, extent=radiomap.extent, origin="lower")
+        plt.colorbar()
         plt.scatter(line.LONGITUDE, line.LATITUDE, c="r", marker="x")
         plt.scatter(wmx, wmy, c="m", marker="*")
         plt.grid()
@@ -100,7 +118,6 @@ def calculate_line_location(line, rm_per_area, qtile=0.95, plot_flag=False):
         plt.ylabel("Latitude")
         plt.title('Validation results for 1-metric\nError = ' + str(round(error, 2)) + ' [m]\n' +
                   "BID = " + str(cur_bid) + ", FLOOR = " + str(cur_floor))
-        plt.colorbar()
         plt.show()
 
     return wmx, wmy, error
@@ -122,10 +139,10 @@ if __name__ == "__main__":
     for index, row in validation_data.iterrows():
         cur_x, cur_y, cur_error = calculate_line_location(row, rm_per_area, qtile=0.95)
         validation_results.loc[index, ['FPx', 'FPy', 'error']] = [cur_x, cur_y, cur_error]
-    verrors = validation_results.error[~np.isnan(validation_results.error)]
+    verrors = validation_results.error[~np.isnan(validation_results.error)].values
 
-    error_90 = round(np.quantile(verrors, 0.9))
-    error_med = round(np.median(verrors, axis=None), 2)
+    error_90 = np.around(np.quantile(verrors, 0.9), 2)
+    error_med = np.around(np.median(verrors, axis=None), 2)
     fig, ax = plt.subplots(figsize=(8, 4))
     ax.hist(verrors, 100, density=True, histtype='step', cumulative=True)
     plt.xlabel('Error [m]')
