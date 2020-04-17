@@ -151,7 +151,7 @@ def get_radiomap_dict(training_data, grid):
         radiomap_dict[cur_ap]['RSSI_map']     = cur_rm
         radiomap_dict[cur_ap]['loc_vec']      = relev_agg_loc    # [lon, lat]
         radiomap_dict[cur_ap]['irev_loc_vec'] = irrelev_agg_loc  # [lon, lat]
-        radiomap_dict[cur_ap]['cov_inv']      = eval_kernel(relev_agg, irrelev_agg_loc)
+        radiomap_dict[cur_ap]['cov_inv']      = eval_kernel(relev_agg, relev_agg)
 
     return radiomap_dict
 
