@@ -114,10 +114,10 @@ if __name__ == "__main__":
     training_data = training_data.drop(columns=["RELATIVEPOSITION", "USERID", "SPACEID"])
 
     training_data = initial_data_processing(training_data)
-    training_data = interpolate_training_data(training_data, amount=3)
+    # training_data = interpolate_training_data(training_data, amount=3)
     validation_data = initial_data_processing(validation_data)
 
-    rm_per_area = rm.create_radiomap_objects(training_data, [2, 2])
+    rm_per_area = rm.create_radiomap_objects(training_data, [2, 2], interpolation='kernel')
 
     validation_results = pd.DataFrame(np.nan, columns=('FPx', 'FPy', 'error'), index=validation_data.index)
     for index, row in validation_data.iterrows():

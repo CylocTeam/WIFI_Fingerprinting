@@ -7,7 +7,7 @@ class RadioMap:
     RadioMap class holds the relevant radiomap data for Wifi fingerprinting. This includes the average RSSI values over
     a specific grid, and the area data (building and floor ids, extent, grid size etc)
     """
-    def __init__(self, training_data, grid_size=(1,1), building=np.nan, floor=np.nan):
+    def __init__(self, training_data, grid_size=(1,1), building=np.nan, floor=np.nan, interpolation=None):
         """
         Initialize the Radiomap object with the necessary data
         :param training_data: training RSSI data (Dataframe with WAP format)
@@ -23,6 +23,9 @@ class RadioMap:
         self.radiomaps = get_radiomap_dict(training_data, (grid_anchor, map_size, grid_size))
         self.building = building
         self.floor = floor
+
+        if interpolation is not None:
+            self.interpolate(method=interpolation)
 
     def get_map_ranges(self):
         """
@@ -65,6 +68,7 @@ class RadioMap:
             linear
         """
         for rm in self.radiomaps.items():
+            pass
     # find unutilized indices -> locations
     # stack to vector - S*
     # retrieve y from rm dict
@@ -72,13 +76,13 @@ class RadioMap:
     # rssi_hat ~ N( K(S*,S)K(S,S)^-1 * y , ...)
     # todo - complete function
 
-def create_radiomap_objects(training_data, grid_size=(1, 1)):
+def create_radiomap_objects(training_data, grid_size=(1, 1), interpolation=None):
     unique_areas = training_data[["BUILDINGID", "FLOOR"]].drop_duplicates()
     rm_per_area = {}
     for area in unique_areas.values:
         building_id, floor = area
         cur_training_data = training_data.loc[(training_data[["BUILDINGID", "FLOOR"]] == area).all(axis=1)]
-        cur_rm = RadioMap(cur_training_data, grid_size=grid_size, building=building_id, floor=floor)
+        cur_rm = RadioMap(cur_training_data, grid_size=grid_size, building=building_id, floor=floor, interpolation=None)
         rm_per_area[building_id, floor] = cur_rm
     return rm_per_area
 
@@ -134,24 +138,35 @@ def get_radiomap_dict(training_data, grid):
     for cur_ap in relev_aps:
         cur_rm = np.full(rm_size, np.nan)
         relev_agg = training_data_agg[~np.isnan(training_data_agg[cur_ap])]
-        relev_agg_loc = training_data_agg_loc[~np.isnan(training_data_agg[cur_ap])]
-
+        
+        isnan_bol = np.isnan(training_data_agg[cur_ap])
+        relev_agg_loc = training_data_agg_loc[isnan_bol]
+        irrelev_agg_loc = training_data_agg_loc[~isnan_bol]
+        
         mean_rssi_vec = relev_agg[cur_ap].tolist()
         ind_x, ind_y = list(zip(*relev_agg.index))
         cur_rm[ind_y, ind_x] = mean_rssi_vec
 
-        radiomap_dict[cur_ap] = {'RSSI_map': [], 'loc_vec': [], 'cov_inv': []}
-        radiomap_dict[cur_ap]['RSSI_map'] = cur_rm
-        radiomap_dict[cur_ap]['loc_vec'] = relev_agg_loc  # [lon, lat]
-        radiomap_dict[cur_ap]['cov_inv'] = calc_covinv(mean_rssi_vec)
+        radiomap_dict[cur_ap] = {'RSSI_map': [], 'loc_vec': [], 'irev_loc_vec': [], 'cov_inv': []}
+        radiomap_dict[cur_ap]['RSSI_map']     = cur_rm
+        radiomap_dict[cur_ap]['loc_vec']      = relev_agg_loc    # [lon, lat]
+        radiomap_dict[cur_ap]['irev_loc_vec'] = irrelev_agg_loc  # [lon, lat]
+        radiomap_dict[cur_ap]['cov_inv']      = eval_kernel(relev_agg, irrelev_agg_loc)
 
     return radiomap_dict
 
 
-def calc_covinv(rssi_vec):
-    N = len(rssi_vec)
-    mean_rssi = np.mean(rssi_vec, 0)
-    rssi_norm = np.expand_dims(rssi_vec - mean_rssi, axis=1)
-    cov_inv = N * np.linalg.inv(np.dot(rssi_norm, rssi_norm.transpose()))
+def eval_kernel(loc_a, loc_b):
+    # [N x 2] , [M x 2] inputs
+    N = loc_a.shape[0]
+    M = loc_b.shape[0]
+    k = np.full(shape=[N,M])
 
-    return cov_inv
+    sigma_f_sq = 1  # flactuation factor
+    l_sq = 1        # length scale factor
+
+    for i,li in enumerate(loc_a):
+        for j, lj in enumerate(loc_b):
+            k[i, j] = sigma_f_sq * np.exp(-1/(2*l_sq) * np.linalg.norm(li-lj))
+
+    return k
