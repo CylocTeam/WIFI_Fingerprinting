@@ -42,5 +42,7 @@ def rm_similarity_calculation (cur_ap_rssi, rm, p=1):
     cc = c_shft.repeat(np.size(rm, axis=0), axis=0).repeat(np.size(rm, axis=1), axis=1)
     weights_map = (np.nansum(abs(rm - cc) ** p, axis=2)) ** (1 / p)
     weights_map[weights_map == 0] = np.nan
-    weights_map[np.any(np.isnan(rm), axis=2)] = np.nan
-    return 1/weights_map
+    weights_map[np.any(np.isnan(rm), axis=2)] = np.nan # amount of unallowed nans in vector (aka how many undetected APS)
+    weights_map = 1/weights_map - 1/np.nansum(abs(cur_ap_rssi)) # first term is the weight, 2nd is centering
+    weights_map[weights_map == 0] = np.nan
+    return weights_map
