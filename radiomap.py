@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import scipy.spatial.distance as pydist
 
 
 class RadioMap:
@@ -68,13 +69,24 @@ class RadioMap:
             linear
         """
         for rm in self.radiomaps.items():
-            pass
-    # find unutilized indices -> locations
-    # stack to vector - S*
-    # retrieve y from rm dict
-    # calc: K(S*,S*),K(S*,S) using also hyperparameters, and retrieve K^-1(S,S) from rm['cov_inv']
-    # rssi_hat ~ N( K(S*,S)K(S,S)^-1 * y , ...)
-    # todo - complete function
+            rm_content = rm[1]
+            rssi_map = rm_content['RSSI_map']
+            is_relev = np.isnan(rssi_map)
+            y1 = rssi_map[~is_relev]
+            k_s1s1 = rm_content['cov'][0]
+            k_s1s2 = eval_kernel(rm_content['loc_vec'], rm_content['irev_loc_vec'], rm_content['cov'][1])
+            k_s2s2 = eval_kernel(rm_content['irev_loc_vec'], rm_content['irev_loc_vec'], rm_content['cov'][1])
+
+            mid_term = k_s1s2.transpose().dot(np.linalg.inv(k_s1s1))
+
+            y2 = mid_term.dot(y1)  # mean
+            y2_conf = np.linalg.eig(k_s2s2 - mid_term.dot(k_s1s2))[0]
+
+            ind_x, ind_y = list(zip(*rm_content['irev_loc_vec'].index))
+            rssi_map[ind_y, ind_x] = y2
+            ## todo - if y2_conf too high for specific cell - use other interpolation method
+            ## Question - are there still nans because the map is not rectengular?
+            ## cuz the groupby retures 77 cells while map_size is ~[76x82]
 
 def create_radiomap_objects(training_data, grid_size=(1, 1), interpolation=None):
     unique_areas = training_data[["BUILDINGID", "FLOOR"]].drop_duplicates()
@@ -82,7 +94,7 @@ def create_radiomap_objects(training_data, grid_size=(1, 1), interpolation=None)
     for area in unique_areas.values:
         building_id, floor = area
         cur_training_data = training_data.loc[(training_data[["BUILDINGID", "FLOOR"]] == area).all(axis=1)]
-        cur_rm = RadioMap(cur_training_data, grid_size=grid_size, building=building_id, floor=floor, interpolation=None)
+        cur_rm = RadioMap(cur_training_data, grid_size=grid_size, building=building_id, floor=floor, interpolation=interpolation)
         rm_per_area[building_id, floor] = cur_rm
     return rm_per_area
 
@@ -132,41 +144,59 @@ def get_radiomap_dict(training_data, grid):
     training_data.insert(0, "grid_pnt", trn_indices)
     training_data_gridgroups = training_data.groupby(by="grid_pnt")
     training_data_agg = training_data_gridgroups.agg({i: np.nanmean for i in relev_aps})
+    training_data_agg_std = training_data_gridgroups.agg({i: np.nanstd for i in relev_aps})
     training_data_agg_loc = training_data_gridgroups.agg({i: np.nanmean for i in ['LONGITUDE','LATITUDE']})
 
     # create a RM for each AP and insert it into the dictionary
     for cur_ap in relev_aps:
         cur_rm = np.full(rm_size, np.nan)
-        relev_agg = training_data_agg[~np.isnan(training_data_agg[cur_ap])]
+        is_relev = ~np.isnan(training_data_agg[cur_ap])
+        relev_mean = training_data_agg[is_relev]
+        relev_std = training_data_agg_std[is_relev][cur_ap]
+        relev_agg_loc = training_data_agg_loc[is_relev]
+        irrelev_agg_loc = training_data_agg_loc[~is_relev]
         
-        isnan_bol = np.isnan(training_data_agg[cur_ap])
-        relev_agg_loc = training_data_agg_loc[isnan_bol]
-        irrelev_agg_loc = training_data_agg_loc[~isnan_bol]
-        
-        mean_rssi_vec = relev_agg[cur_ap].tolist()
-        ind_x, ind_y = list(zip(*relev_agg.index))
+        mean_rssi_vec = relev_mean[cur_ap].tolist()
+        ind_x, ind_y = list(zip(*relev_mean.index))
         cur_rm[ind_y, ind_x] = mean_rssi_vec
 
-        radiomap_dict[cur_ap] = {'RSSI_map': [], 'loc_vec': [], 'irev_loc_vec': [], 'cov_inv': []}
+        radiomap_dict[cur_ap] = {'RSSI_map': [], 'loc_vec': [], 'irev_loc_vec': [], 'cov': []}
         radiomap_dict[cur_ap]['RSSI_map']     = cur_rm
         radiomap_dict[cur_ap]['loc_vec']      = relev_agg_loc    # [lon, lat]
         radiomap_dict[cur_ap]['irev_loc_vec'] = irrelev_agg_loc  # [lon, lat]
-        radiomap_dict[cur_ap]['cov_inv']      = eval_kernel(relev_agg, relev_agg)
+        radiomap_dict[cur_ap]['cov']      = train_kernel(relev_agg_loc, relev_agg_loc, train_std=relev_std)
 
     return radiomap_dict
 
 
-def eval_kernel(loc_a, loc_b):
-    # [N x 2] , [M x 2] inputs
-    N = loc_a.shape[0]
-    M = loc_b.shape[0]
-    k = np.full(shape=[N,M])
+def train_kernel(loc_a, loc_b, train_std=None):
 
-    sigma_f_sq = 1  # flactuation factor
-    l_sq = 1        # length scale factor
+    if train_std is None:
+        sigma_f_sq = 1  # flactuation factor
+        l_sq = 1  # length scale factor
+    else:
+        # train
+        sigma_f_sq = np.mean(train_std)
+        l_sq = 34.
+        hyperparams = {'sigma_f_sq': sigma_f_sq, 'l_sq': l_sq}
 
-    for i,li in enumerate(loc_a):
-        for j, lj in enumerate(loc_b):
-            k[i, j] = sigma_f_sq * np.exp(-1/(2*l_sq) * np.linalg.norm(li-lj))
+    k = eval_kernel(loc_a, loc_b, hyperparams)
+
+    # retain original STDs
+    k = k - np.diag(np.diag(k)) + np.diag(train_std)
+
+    return k, hyperparams
+
+
+def eval_kernel(loc_a, loc_b, hyper_params={}):
+
+    if hyper_params == {}:
+        sigma_f_sq = 1  # flactuation factor
+        l_sq = 1        # length scale factor
+    else:
+        sigma_f_sq = hyper_params['sigma_f_sq']
+        l_sq       = hyper_params['l_sq']
+
+    k = sigma_f_sq * np.exp(-1/(2*l_sq) * pydist.cdist(loc_a, loc_b))
 
     return k
