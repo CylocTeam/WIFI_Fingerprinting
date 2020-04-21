@@ -1,8 +1,6 @@
-import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
-import similarity as sm
-import radiomap as rm
+from similarity import *
+from radiomap import *
 
 
 def initial_data_processing(df):
@@ -14,8 +12,6 @@ def initial_data_processing(df):
     df = df.sort_values(by=["PHONEID", "TIMESTAMP"])
     wap_column_names = df.filter(regex=("WAP\d*")).columns
     df[df[wap_column_names] == 100] = np.nan  # 100 indicates an AP that wasn't detected
-    # spatial_mean = np.mean(df[wap_column_names], axis=1)
-    # df[wap_column_names] = df[wap_column_names].sub(spatial_mean, axis=0) # spatial mean normalization
 
     # group by device ID
     pid_grp = df.groupby(["PHONEID"])
@@ -36,26 +32,6 @@ def rayleigh_dist_std(df):
     if len(df) == 0:
         return np.Inf
     return np.sqrt((df ** 2).sum() / (2 * len(df)))
-
-
-def interpolate_training_data(training_set, amount=1):
-    grp = training_set.groupby(["BUILDINGID", "FLOOR", "PHONEID"])
-    out_df = pd.DataFrame()
-    for bid, floor, userid in grp.groups.keys():
-        cur_grp = grp.get_group((bid, floor, userid))
-        cur_grp_interp = interpolate_group(cur_grp,amount=amount)
-        out_df = out_df.append(cur_grp_interp, ignore_index=True)
-    return out_df
-
-
-def interpolate_group(df, amount=1):
-    # duplicate each line
-    df = df.sort_values("TIMESTAMP")
-    zeros = np.full(np.shape(df.values), np.nan).repeat(amount, axis=1)
-    data = np.hstack([df.values, zeros]).reshape(-1, df.shape[1])
-    df_ordered = pd.DataFrame(data, columns=df.columns)
-    df_ordered.interpolate(method="linear", inplace=True)
-    return df_ordered
 
 
 def wknn_find_location(weights, xx, yy, K):
@@ -96,7 +72,7 @@ def calculate_line_location(line, rm_per_area, qtile=0.95, plot_flag=False):
 
     rm_rssi = radiomap.get_ap_maps_ndarray(relev_aps)
     rm_rssi = np.where(~np.isnan(rm_rssi), rm_rssi, 0) # according to rayleigh normalization
-    weights = sm.rm_similarity_calculation(line[relev_aps], rm_rssi, p=1)
+    weights = rm_similarity_calculation(line[relev_aps], rm_rssi, p=1)
     xx, yy = radiomap.get_map_ranges()
 
     weights_qtile = np.nanquantile(weights, qtile)
@@ -133,10 +109,9 @@ if __name__ == "__main__":
     training_data = training_data.drop(columns=["RELATIVEPOSITION", "USERID", "SPACEID"])
 
     training_data = initial_data_processing(training_data)
-    #training_data = interpolate_training_data(training_data, amount=3)
     validation_data = initial_data_processing(validation_data)
 
-    rm_per_area = rm.create_radiomap_objects(training_data, [2, 2])
+    rm_per_area = create_radiomap_objects(training_data, [2, 2])
 
     validation_results = pd.DataFrame(np.nan, columns=('FPx', 'FPy', 'error'), index=validation_data.index)
     for index, row in validation_data.iterrows():
