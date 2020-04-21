@@ -33,7 +33,7 @@ class RadioMap:
         self.grid_size = grid_size
         self.extent = grid_x + grid_y
         self.map_size = map_size = [int((np.diff(grid_y)/grid_size[1])), int((np.diff(grid_x)/grid_size[0]))]
-        rm, rm_var = get_radiomap_dict(training_data, (grid_anchor, map_size, grid_size), functions=["mean", "var"])
+        rm, rm_var = get_radiomap_dict(training_data, (grid_anchor, map_size, grid_size), functions=[np.nanmean, np.nanvar])
         self.radiomaps = rm
         self.radiomap_var = rm_var
         self.building = building
@@ -65,13 +65,15 @@ class RadioMap:
         :return: narray of size (map size(2d) X ap_list size) with RSSI data of APs
         """
         keys = self.radiomaps.keys()
-        radio_list = []
+        radio_list, radio_ap_list = [], []
         for ap in ap_list:
             if ap in keys:
                 radio_list.append(self.radiomaps[ap])
+                radio_ap_list.append(self.radiomap_var[ap])
             else:
                 radio_list.append(np.full(self.map_size, np.nan))
-        return np.dstack(radio_list)
+                radio_ap_list.append(np.full(self.map_size, np.nan))
+        return np.dstack(radio_list), np.dstack(radio_ap_list)
 
 
 def create_radiomap_objects(training_data, grid_size=(1, 1)):
@@ -136,11 +138,14 @@ def get_radiomap_dict(training_data, grid, functions=None):
 
     # create a RM for each AP and insert it into the dictionary
     for cur_ap in relev_aps:
+        clm = training_data_agg[cur_ap].columns # column names might be different than func if func isn't a string
         for ii in range(0, len(functions)):
-            fnc = functions[ii]
+            fnc = clm[ii]
             cur_rm = np.full(rm_size, np.nan)
             relev_agg = training_data_agg[~np.isnan(training_data_agg[cur_ap, fnc])]
 
+            if len(relev_agg) == 0:
+                continue
             ind_x, ind_y = list(zip(*relev_agg.index))
             cur_rm[ind_y, ind_x] = relev_agg[cur_ap, fnc].tolist()
             dct_list[ii][cur_ap] = cur_rm
