@@ -64,14 +64,16 @@ class RadioMap:
         :param ap_list: list of strings (AP name keys)
         :return: narray of size (map size(2d) X ap_list size) with RSSI data of APs
         """
-        keys = self.radiomaps.keys()
         radio_list, radio_ap_list = [], []
         for ap in ap_list:
-            if ap in keys:
+            if ap in self.radiomaps.keys():
                 radio_list.append(self.radiomaps[ap])
-                radio_ap_list.append(self.radiomap_var[ap])
             else:
                 radio_list.append(np.full(self.map_size, np.nan))
+        for ap in ap_list:
+            if ap in self.radiomap_var.keys():
+                radio_ap_list.append(self.radiomap_var[ap])
+            else:
                 radio_ap_list.append(np.full(self.map_size, np.nan))
         return np.dstack(radio_list), np.dstack(radio_ap_list)
 
