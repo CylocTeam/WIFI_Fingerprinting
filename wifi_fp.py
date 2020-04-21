@@ -70,7 +70,7 @@ def calculate_line_location(line, rm_per_area, qtile=0.95, plot_flag=False):
     relev_aps = wap_column_names[~np.isnan(line[wap_column_names])]
     radiomap = rm_per_area[cur_bid, cur_floor]
 
-    rm_rssi = radiomap.get_ap_maps_ndarray(relev_aps)
+    rm_rssi, rm_rssi_var = radiomap.get_ap_maps_ndarray(relev_aps)
     rm_rssi = np.where(~np.isnan(rm_rssi), rm_rssi, 0) # according to rayleigh normalization
     weights = rm_similarity_calculation(line[relev_aps], rm_rssi, p=1)
     xx, yy = radiomap.get_map_ranges()
