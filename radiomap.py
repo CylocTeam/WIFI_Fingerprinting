@@ -57,7 +57,7 @@ class RadioMap:
         radio_list = []
         for ap in ap_list:
             if ap in keys:
-                radio_list.append(self.radiomaps[ap])
+                radio_list.append(self.radiomaps[ap]["RSSI_map"])
             else:
                 radio_list.append(np.full(self.map_size, np.nan))
         return np.dstack(radio_list)
@@ -70,29 +70,45 @@ class RadioMap:
         """
         for rm in self.radiomaps.items():
             rm_content = rm[1]
+            # validate sustainable data
+            if pydist.norm(np.diag(rm_content['cov'][0])) == 0: # single samples along all cells
+
+                print('bulding: {bld}, floor: {flr}, AP={ap} '
+                      'contains single point - Will not be interpolated'.format(bld=self.building, flr=self.floor, ap=rm[0]))
+                continue
+
             rssi_map = rm_content['RSSI_map']
             is_relev = np.isnan(rssi_map)
             y1 = rssi_map[~is_relev]
             k_s1s1 = rm_content['cov'][0]
             k_s1s2 = eval_kernel(rm_content['loc_vec'], rm_content['irev_loc_vec'], rm_content['cov'][1])
-            k_s2s2 = eval_kernel(rm_content['irev_loc_vec'], rm_content['irev_loc_vec'], rm_content['cov'][1])
+            # k_s2s2 = eval_kernel(rm_content['irev_loc_vec'], rm_content['irev_loc_vec'], rm_content['cov'][1])
 
-            mid_term = k_s1s2.transpose().dot(np.linalg.inv(k_s1s1))
+            try:
+                mid_term = np.dot(k_s1s2.transpose(), (np.linalg.inv(k_s1s1)))
+                y2 = np.dot(mid_term, y1)  # mean
+            # y2_covmat = np.linalg.eig(k_s2s2 - mid_term.dot(k_s1s2))[0]
 
-            y2 = mid_term.dot(y1)  # mean
-            y2_conf = np.linalg.eig(k_s2s2 - mid_term.dot(k_s1s2))[0]
+            except:
+                print('bulding: {bld}, floor: {flr}, AP={ap}\n'.format(bld=self.building, flr=self.floor, ap=rm[0]))
+                continue
+            try:
+                ind_x, ind_y = list(zip(*rm_content['irev_loc_vec'].index))
+                rssi_map[ind_y, ind_x] = y2
+            except:
+                print('bulding: {bld}, floor: {flr}, AP={ap} '
+                      'unpacking error'.format(bld=self.building, flr=self.floor, ap=rm[0]))
+                continue
 
-            ind_x, ind_y = list(zip(*rm_content['irev_loc_vec'].index))
-            rssi_map[ind_y, ind_x] = y2
             ## todo - if y2_conf too high for specific cell - use other interpolation method
-            ## Question - are there still nans because the map is not rectengular?
-            ## cuz the groupby retures 77 cells while map_size is ~[76x82]
+
 
 def create_radiomap_objects(training_data, grid_size=(1, 1), interpolation=None):
     unique_areas = training_data[["BUILDINGID", "FLOOR"]].drop_duplicates()
     rm_per_area = {}
     for area in unique_areas.values:
         building_id, floor = area
+        print(area)
         cur_training_data = training_data.loc[(training_data[["BUILDINGID", "FLOOR"]] == area).all(axis=1)]
         cur_rm = RadioMap(cur_training_data, grid_size=grid_size, building=building_id, floor=floor, interpolation=interpolation)
         rm_per_area[building_id, floor] = cur_rm
