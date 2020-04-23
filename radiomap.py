@@ -20,7 +20,7 @@ class RadioMap:
     RadioMap class holds the relevant radiomap data for Wifi fingerprinting. This includes the average RSSI values over
     a specific grid, and the area data (building and floor ids, extent, grid size etc)
     """
-    def __init__(self, training_data, grid_size=(1,1), building=np.nan, floor=np.nan):
+    def __init__(self, training_data, grid_size=(1,1), padding=(0,0), building=np.nan, floor=np.nan):
         """
         Initialize the Radiomap object with the necessary data
         :param training_data: training RSSI data (Dataframe with WAP format)
@@ -28,7 +28,7 @@ class RadioMap:
         :param building: ID of building
         :param floor: ID of floor in building
         """
-        grid_x, grid_y = get_grid_edges(training_data, grid_size)
+        grid_x, grid_y = get_grid_edges(training_data, grid_size, padding=padding)
         self.grid_anchor = grid_anchor = (grid_x[0], grid_y[0])
         self.grid_size = grid_size
         self.extent = grid_x + grid_y
@@ -78,13 +78,13 @@ class RadioMap:
         return np.dstack(radio_list), np.dstack(radio_ap_list)
 
 
-def create_radiomap_objects(training_data, grid_size=(1, 1)):
+def create_radiomap_objects(training_data, grid_size=(1, 1), padding=(0,0)):
     unique_areas = training_data[["BUILDINGID", "FLOOR"]].drop_duplicates()
     rm_per_area = {}
     for area in unique_areas.values:
         building_id, floor = area
         cur_training_data = training_data.loc[(training_data[["BUILDINGID", "FLOOR"]] == area).all(axis=1)]
-        cur_rm = RadioMap(cur_training_data, grid_size=grid_size, building=building_id, floor=floor)
+        cur_rm = RadioMap(cur_training_data, grid_size=grid_size, building=building_id, floor=floor, padding=padding)
         rm_per_area[building_id, floor] = cur_rm
     return rm_per_area
 
@@ -101,7 +101,7 @@ def coordinates_to_indices(x, y, grid_anchor, grid_size):
     return list(zip(*(np.int_((x-grid_anchor[0])/grid_size[0]), np.int_((y-grid_anchor[1])/grid_size[1]))))
 
 
-def get_grid_edges(cur_training_data, grid_size):
+def get_grid_edges(cur_training_data, grid_size, padding=(0,0)):
     """
     get the edges of the grid specificed by training data.
     the edges are the exntent where we actually have data points + small safety window
@@ -109,10 +109,10 @@ def get_grid_edges(cur_training_data, grid_size):
     :param grid_size: (dx,dy) tuple containing the size of the grid in x,y directions
     :return: [grid_min_lon, grid_max_lon], [grid_min_lat, grid_max_lat]
     """
-    min_x = np.min(cur_training_data.LONGITUDE)
-    max_x = min_x + np.ceil((np.max(cur_training_data.LONGITUDE) - min_x)/grid_size[0])*grid_size[0]
-    min_y = np.min(cur_training_data.LATITUDE)
-    max_y = min_y + np.ceil((np.max(cur_training_data.LATITUDE) - min_y)/grid_size[1])*grid_size[1]
+    min_x = np.min(cur_training_data.LONGITUDE) - padding[0]
+    max_x = min_x + np.ceil((np.max(cur_training_data.LONGITUDE) - min_x)/grid_size[0])*grid_size[0] + padding[1]
+    min_y = np.min(cur_training_data.LATITUDE) - padding[1]
+    max_y = min_y + np.ceil((np.max(cur_training_data.LATITUDE) - min_y)/grid_size[1])*grid_size[1] + padding[1]
     return [min_x, max_x], [min_y, max_y]
 
 

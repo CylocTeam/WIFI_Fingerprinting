@@ -1,9 +1,10 @@
 import matplotlib.pyplot as plt
 from similarity import *
 from radiomap import *
+from scipy.stats import multivariate_normal as mvn
+from datetime import datetime
 
-
-def initial_data_processing(df):
+def initial_data_processing(df, res_mean=0, res_sigma=1):
     """
     initial procession of data (normalization + missing APs replacing)
     :param df: Dataframe with data to process
@@ -20,6 +21,7 @@ def initial_data_processing(df):
     phone_nrm["std"] = pid_grp.agg({cn: rayleigh_dist_std for cn in wap_column_names}).sum(axis=1)
     df[wap_column_names] = df[wap_column_names].subtract(phone_nrm["min"].loc[df["PHONEID"]].values, axis=0)
     df[wap_column_names] = df[wap_column_names].divide(phone_nrm["std"].loc[df["PHONEID"]].values, axis=0)
+    df[wap_column_names] = df[wap_column_names].mul(res_sigma).add(res_mean)
     return df
 
 
@@ -32,6 +34,87 @@ def rayleigh_dist_std(df):
     if len(df) == 0:
         return np.Inf
     return np.sqrt((df ** 2).sum() / (2 * len(df)))
+
+
+def perform_kalman_filter_fp(df, radiomap, plot=False):
+    wap_column_names = df.filter(regex=("WAP\d*")).columns
+    xx, yy = radiomap.get_map_ranges()
+    XX, YY = np.meshgrid(xx, yy)
+    rm_rssi, rm_rssi_var = radiomap.get_ap_maps_ndarray(wap_column_names)
+    rm_rssi = np.where(~np.isnan(rm_rssi), rm_rssi, 0)
+
+    kf_results = {"loc": [], "err": [], "real_err": []}
+    ppi = np.diag([np.mean(np.diff(xx) ** 2) / 12, np.mean(np.diff(yy) ** 2) / 12])
+    sigma = np.sqrt(np.nanmean(rm_rssi_var, axis=(0,1))) # we'll use an average sigma to avoid single-sample errors
+
+    loc = [np.nanmean(xx), np.nanmean(yy)] # initialize location at the center of map
+    err = np.diag([1000, 1000]) ** 2 # before iterating we have no information
+    for ind, row in df.iterrows():
+        # state transition of stationary model (simplest one)
+        rlv_cl = ~np.isnan(row[wap_column_names]) & ~np.isnan(sigma)
+        yk, rlv_rssi, rlv_sigma = row[wap_column_names[rlv_cl]], rm_rssi[:,:,rlv_cl], sigma[rlv_cl]
+
+        bstk = mvn.pdf(np.dstack([XX, YY]), loc, err)
+        bstk /= np.sum(bstk)
+        bstk_s = bstk[:, :, np.newaxis]
+
+        y_hat = np.nanmean(bstk_s * rlv_rssi, axis=(0,1))
+        p_hat = [(bstk * XX).sum(),  (bstk * YY).sum()]
+
+        # calculate the covariance matrices
+        ppdf = np.dstack([XX, YY]) - p_hat
+        pydf = rlv_rssi - y_hat
+
+        ppxk = np.einsum("ijk,ijw", ppdf*bstk_s, ppdf) + ppi # PXXk
+        ppyk = np.einsum("ijk,ijw", ppdf*bstk_s, pydf) # PXYk
+        pyyk = np.einsum("ijk,ijw", pydf*bstk_s, pydf) + np.diag(rlv_sigma) # PYYk
+
+        # calculate the new location estimation and eerror
+        K = np.matmul(ppyk, np.linalg.inv(pyyk))
+        loc = loc + np.matmul(K, (yk - y_hat))
+        err = ppxk - np.matmul(K, ppyk.T)
+        real_err = np.array([row.LONGITUDE, row.LATITUDE]) - loc
+        kf_results["loc"].append(loc)
+        kf_results["err"].append(err)
+        kf_results["real_err"].append(real_err)
+
+        if plot:
+            a, b, t = calculate_error_ellipse(err)
+            pid, bid, fid, ts = row[["PHONEID", "BUILDINGID", "FLOOR", "TIMESTAMP"]]
+            time = datetime.fromtimestamp(ts)
+            ttl = "\n".join(["", "Phone: " + str(pid), "BUILDING: " + str(bid) + ", FLOOR: " + str(fid),
+                             "TIME: " + str(time), "Error: " + str(np.linalg.norm(real_err)) + " [m]",
+                             "Ellipse HJA: " + str(a) + " [m]"])
+            fig = plt.gcf(); fig.clf()
+            plt.imshow(np.linalg.norm(pydf, axis=2), extent=radiomap.extent, origin="lower", vmin=0)
+            plt.colorbar()
+            plt.scatter(row.LONGITUDE, row.LATITUDE, c="r", marker="x")
+            plt.scatter(loc[0], loc[1], c="m", marker="*")
+            plot_ellipse(loc, a, b, t, color="m")
+            plt.grid()
+            plt.xlabel("Longitude")
+            plt.ylabel("Latitude")
+            plt.title(ttl)
+            plt.draw()
+            plt.pause(.2)
+    return kf_results
+
+
+def calculate_error_ellipse(err, prc=0.9):
+    #kappa = -2*np.log(1-prc)
+    kappa = 1
+    eigval, eigvec = np.linalg.eig(err)
+    hmja, hmia = kappa*np.sqrt(np.max(eigval)), kappa*np.sqrt(np.min(eigval))
+    hmj_ind = np.argmax(eigval)
+    ang = np.arctan2(eigvec[hmj_ind, 1], eigvec[hmj_ind, 0])
+    return hmja, hmia, ang
+
+
+def plot_ellipse(center, a,b,t, color="b"):
+    theta = np.arange(0, 2*np.pi, 0.01)
+    ppx, ppy = np.matmul([[np.cos(t), -np.sin(t)], [np.sin(t), np.cos(t)]],[a*np.cos(theta), b*np.sin(theta)])
+    plt.plot(center[0] + ppx, center[1] + ppy, color=color)
+    return
 
 
 def wknn_find_location(weights, xx, yy, K):
@@ -108,27 +191,18 @@ if __name__ == "__main__":
     wap_column_names = training_data.filter(regex=("WAP\d*")).columns
     training_data = training_data.drop(columns=["RELATIVEPOSITION", "USERID", "SPACEID"])
 
-    training_data = initial_data_processing(training_data)
-    validation_data = initial_data_processing(validation_data)
+    training_data = initial_data_processing(training_data, res_sigma=1000)
+    validation_data = initial_data_processing(validation_data, res_sigma=1000)
 
-    rm_per_area = create_radiomap_objects(training_data, [2, 2])
+    rm_per_area = create_radiomap_objects(training_data, [2, 2], padding=(50,50))
 
     validation_results = pd.DataFrame(np.nan, columns=('FPx', 'FPy', 'error'), index=validation_data.index)
-    for index, row in validation_data.iterrows():
-        cur_x, cur_y, cur_error = calculate_line_location(row, rm_per_area, qtile=0.95)
-        validation_results.loc[index, ['FPx', 'FPy', 'error']] = [cur_x, cur_y, cur_error]
-    verrors = validation_results.error[~np.isnan(validation_results.error)].values
 
-    error_90 = np.around(np.quantile(verrors, 0.9), 2)
-    error_med = np.around(np.median(verrors, axis=None), 2)
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.hist(verrors, 100, density=True, histtype='step', cumulative=True)
-    plt.xlabel('Error [m]')
-    plt.ylabel('Percentile')
-    plt.title('Validation results for 1-metric\n90% error at ' + str(error_90) + ' [m]\n'+
-              'Median error at ' + str(error_med) + '[m]')
-    plt.grid()
-    plt.show()
+    plt.figure()
+    grp_res = {}
+    vgrp = validation_data.groupby(["PHONEID", "BUILDINGID", "FLOOR"])
+    for name, cvgrp in vgrp:
+        phone_id, building_id, floor = name
+        radiomap = rm_per_area[building_id, floor]
+        grp_res[name] = perform_kalman_filter_fp(cvgrp, radiomap, plot=True)
 
-    for ii in validation_results.index:
-        calculate_line_location(validation_data.loc[ii], rm_per_area, plot_flag=True)

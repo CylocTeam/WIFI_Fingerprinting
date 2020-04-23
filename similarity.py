@@ -46,3 +46,24 @@ def rm_similarity_calculation (cur_ap_rssi, rm, p=1):
     weights_map = 1/weights_map - 1/np.nansum(abs(cur_ap_rssi)) # first term is the weight, 2nd is centering
     weights_map[weights_map == 0] = np.nan
     return weights_map
+
+
+def rm_kalman_similarity (cur_ap_rssi, rm, sigma = 1):
+    """
+    calculate the p-norm similarity between an rssi vector and radiomap
+    :param cur_ap_rssi: vector including the current RSSI data to compare to the radiomap (array of 1xN)
+    :param rm: radiomap containing fingerprint data (narray of A x B x N)
+    :param p: norm parameter
+    :return: narray of size (AxB) with similarity value at each point of the radiomap
+    """
+    # shift the input vector to the RadioMap matrix form
+    c = cur_ap_rssi.to_numpy()
+    c_shft = np.moveaxis(c.reshape((-1,) + (1,) * (rm.ndim - 1)), 0, -1)
+    cc = c_shft.repeat(np.size(rm, axis=0), axis=0).repeat(np.size(rm, axis=1), axis=1)
+
+    # calculate the weights
+    weights_map = stt.norm.pdf(np.divide(cc - rm, sigma))
+    weights_map /= np.nansum(weights_map) # might need to change to axis
+    weights_map[np.isnan(weights_map)] = 0
+
+    return weights_map
