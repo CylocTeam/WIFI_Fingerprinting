@@ -35,9 +35,7 @@ class RadioMap:
         self.grid_size = grid_size
         self.extent = grid_x + grid_y
         self.map_size = map_size = [int((np.diff(grid_y)/grid_size[1])), int((np.diff(grid_x)/grid_size[0]))]
-        rm, rm_var = get_radiomap_dict(training_data, (grid_anchor, map_size, grid_size), functions=[np.nanmean, np.nanvar])
-        self.radiomaps = rm
-        self.radiomap_var = rm_var
+        self.radiomaps = get_radiomap_dict(training_data, (grid_anchor, map_size, grid_size), functions=[np.nanmean, np.nanstd])
         self.building = building
         self.floor = floor
 
@@ -69,19 +67,17 @@ class RadioMap:
         :param ap_list: list of strings (AP name keys)
         :return: narray of size (map size(2d) X ap_list size) with RSSI data of APs
         """
+        keys = self.radiomaps.keys()
         radio_list, radio_ap_list = [], []
         for ap in ap_list:
             if ap in keys:
-                radio_list.append(self.radiomaps[ap]["RSSI_map"])
+                radio_list.append(self.radiomaps[ap]["RSSI_map"]['nanmean'])
+                radio_ap_list.append(self.radiomaps[ap]["RSSI_map"]['nanstd'])
             else:
                 radio_list.append(np.full(self.map_size, np.nan))
-        for ap in ap_list:
-            if ap in self.radiomap_var.keys():
-                radio_ap_list.append(self.radiomap_var[ap])
-            else:
                 radio_ap_list.append(np.full(self.map_size, np.nan))
-        return np.dstack(radio_list), np.dstack(radio_ap_list)
 
+        return np.dstack(radio_list), np.dstack(radio_ap_list)
 
     def interpolate(self, method='kernel'):
         """ method interpolates each rm for each AP using one of methods below:
@@ -102,7 +98,7 @@ class RadioMap:
                       'RSSI map is full - no interpolation made'.format(bld=self.building, flr=self.floor, ap=rm[0]))
                 continue
 
-            rssi_map = rm_content['RSSI_map']
+            rssi_map = rm_content['RSSI_map']['nanmean']
             is_relev = np.isnan(rssi_map)
             y1 = rssi_map[~is_relev]
             k_s1s1 = rm_content['cov'][0]
@@ -179,7 +175,6 @@ def get_radiomap_dict(training_data, grid, functions=None):
     # setting up necessary variables
     wap_column_names = training_data.filter(regex=("WAP\d*")).columns
     relev_aps = wap_column_names[(~np.isnan(training_data[wap_column_names])).any(axis=0)]
-    dct_list = tuple([{} for ii in range(0, len(functions))])
     grid_anchor, rm_size, grid_size = grid
 
     # find average rssi values for each AP in each point in space
@@ -190,9 +185,12 @@ def get_radiomap_dict(training_data, grid, functions=None):
     training_data_agg_loc = training_data_gridgroups.agg({i: np.nanmean for i in ['LONGITUDE', 'LATITUDE']})
 
     # create a RM for each AP and insert it into the dictionary
+    radiomap_dict = {}
     for cur_ap in relev_aps:
         clm = training_data_agg[cur_ap].columns  # column names might be different than func if func isn't a string
         cur_rm = np.full(rm_size, np.nan)
+        radiomap_dict[cur_ap] = {'RSSI_map': {}, 'loc_vec': [], 'irev_loc_vec': [], 'cov': []}
+
         for ii in range(0, len(functions)):
             fnc = clm[ii]
             is_relev = ~np.isnan(training_data_agg[cur_ap, fnc])
@@ -202,19 +200,16 @@ def get_radiomap_dict(training_data, grid, functions=None):
                 continue
 
             relev_agg_fnc = relev_agg[cur_ap, fnc].tolist()
-
-            if fnc == 'nanmean':
-                mean_rssi_vec = relev_agg_fnc
-                ind_x, ind_y = list(zip(*relev_agg.index))
-                cur_rm[ind_y, ind_x] = mean_rssi_vec
-
-            if fnc == 'nanstd':
+            if fnc == "nanstd":
                 relev_std = relev_agg_fnc
+
+            ind_x, ind_y = list(zip(*relev_agg.index))
+            cur_rm[ind_y, ind_x] = relev_agg_fnc
+            radiomap_dict[cur_ap]['RSSI_map'][fnc] = cur_rm
 
         relev_agg_loc = training_data_agg_loc[is_relev]
         irrelev_agg_loc = training_data_agg_loc[~is_relev]
-        radiomap_dict[cur_ap] = {'RSSI_map': [], 'loc_vec': [], 'irev_loc_vec': [], 'cov': []}
-        radiomap_dict[cur_ap]['RSSI_map']     = cur_rm
+
         radiomap_dict[cur_ap]['loc_vec']      = relev_agg_loc    # [lon, lat]
         radiomap_dict[cur_ap]['irev_loc_vec'] = irrelev_agg_loc  # [lon, lat]
         radiomap_dict[cur_ap]['cov']      = train_kernel(relev_agg_loc, relev_agg_loc, train_std=relev_std)

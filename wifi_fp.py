@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 from similarity import *
-from radiomap import *
+import radiomap as rm
 
 
 def initial_data_processing(df):
