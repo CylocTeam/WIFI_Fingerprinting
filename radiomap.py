@@ -1,4 +1,6 @@
 import numpy as np
+import pandas as pd
+import scipy.spatial.distance as pydist
 
 
 # class RadioCell:
@@ -20,7 +22,7 @@ class RadioMap:
     RadioMap class holds the relevant radiomap data for Wifi fingerprinting. This includes the average RSSI values over
     a specific grid, and the area data (building and floor ids, extent, grid size etc)
     """
-    def __init__(self, training_data, grid_size=(1,1), building=np.nan, floor=np.nan):
+    def __init__(self, training_data, grid_size=(1,1), building=np.nan, floor=np.nan, interpolation=None):
         """
         Initialize the Radiomap object with the necessary data
         :param training_data: training RSSI data (Dataframe with WAP format)
@@ -38,6 +40,9 @@ class RadioMap:
         self.radiomap_var = rm_var
         self.building = building
         self.floor = floor
+
+        if interpolation is not None:
+            self.interpolate(method=interpolation)
 
     def get_map_ranges(self):
         """
@@ -66,8 +71,8 @@ class RadioMap:
         """
         radio_list, radio_ap_list = [], []
         for ap in ap_list:
-            if ap in self.radiomaps.keys():
-                radio_list.append(self.radiomaps[ap])
+            if ap in keys:
+                radio_list.append(self.radiomaps[ap]["RSSI_map"])
             else:
                 radio_list.append(np.full(self.map_size, np.nan))
         for ap in ap_list:
@@ -78,13 +83,58 @@ class RadioMap:
         return np.dstack(radio_list), np.dstack(radio_ap_list)
 
 
-def create_radiomap_objects(training_data, grid_size=(1, 1)):
+    def interpolate(self, method='kernel'):
+        """ method interpolates each rm for each AP using one of methods below:
+            kernel - gaussian / gamma
+            linear
+        """
+        for rm in self.radiomaps.items():
+            rm_content = rm[1]
+            # validate sustainable data
+            if pydist.norm(np.diag(rm_content['cov'][0])) == 0: # single samples along all cells
+
+                print('bulding: {bld}, floor: {flr}, AP={ap} '
+                      'contains single point - Will not be interpolated'.format(bld=self.building, flr=self.floor, ap=rm[0]))
+                continue
+
+            if rm_content['irev_loc_vec'].shape[0] == 0:  # no cells to interpolate
+                print('bulding: {bld}, floor: {flr}, AP={ap} '
+                      'RSSI map is full - no interpolation made'.format(bld=self.building, flr=self.floor, ap=rm[0]))
+                continue
+
+            rssi_map = rm_content['RSSI_map']
+            is_relev = np.isnan(rssi_map)
+            y1 = rssi_map[~is_relev]
+            k_s1s1 = rm_content['cov'][0]
+            k_s1s2 = eval_kernel(rm_content['loc_vec'], rm_content['irev_loc_vec'], rm_content['cov'][1])
+            # k_s2s2 = eval_kernel(rm_content['irev_loc_vec'], rm_content['irev_loc_vec'], rm_content['cov'][1])
+
+            # try:
+            mid_term = np.dot(k_s1s2.transpose(), (np.linalg.inv(k_s1s1)))
+            y2 = np.dot(mid_term, y1)  # mean
+            # y2_covmat = np.linalg.eig(k_s2s2 - mid_term.dot(k_s1s2))[0]
+
+            # except:
+            #     print('bulding: {bld}, floor: {flr}, AP={ap}\n'.format(bld=self.building, flr=self.floor, ap=rm[0]))
+            #     continue
+            try:
+                ind_x, ind_y = list(zip(*rm_content['irev_loc_vec'].index))
+                rssi_map[ind_y, ind_x] = y2
+            except:
+                print('bulding: {bld}, floor: {flr}, AP={ap} '
+                      'unpacking error'.format(bld=self.building, flr=self.floor, ap=rm[0]))
+                continue
+
+            ## todo - if y2_conf too high for specific cell - use other interpolation method
+
+
+def create_radiomap_objects(training_data, grid_size=(1, 1), interpolation=None):
     unique_areas = training_data[["BUILDINGID", "FLOOR"]].drop_duplicates()
     rm_per_area = {}
     for area in unique_areas.values:
         building_id, floor = area
         cur_training_data = training_data.loc[(training_data[["BUILDINGID", "FLOOR"]] == area).all(axis=1)]
-        cur_rm = RadioMap(cur_training_data, grid_size=grid_size, building=building_id, floor=floor)
+        cur_rm = RadioMap(cur_training_data, grid_size=grid_size, building=building_id, floor=floor, interpolation=interpolation)
         rm_per_area[building_id, floor] = cur_rm
     return rm_per_area
 
@@ -123,8 +173,8 @@ def get_radiomap_dict(training_data, grid, functions=None):
     :param grid: tuple (grid_lon, grid_lat, grid_size) = ([grid_min_lon, grid_max_lon], [grid_min_lat, grid_max_lat], (dx,dy))
     :return: Dataframe containing RM in the specified extent
     """
-    if functions is None:
-        functions = ["mean"]
+    if (functions is None) or len(functions) == 1:
+        functions = [np.nanmean, np.nanstd]
 
     # setting up necessary variables
     wap_column_names = training_data.filter(regex=("WAP\d*")).columns
@@ -137,20 +187,69 @@ def get_radiomap_dict(training_data, grid, functions=None):
     training_data.insert(0, "grid_pnt", trn_indices)
     training_data_gridgroups = training_data.groupby(by="grid_pnt")
     training_data_agg = training_data_gridgroups.agg({i: functions for i in relev_aps})
+    training_data_agg_loc = training_data_gridgroups.agg({i: np.nanmean for i in ['LONGITUDE', 'LATITUDE']})
 
     # create a RM for each AP and insert it into the dictionary
     for cur_ap in relev_aps:
-        clm = training_data_agg[cur_ap].columns # column names might be different than func if func isn't a string
+        clm = training_data_agg[cur_ap].columns  # column names might be different than func if func isn't a string
+        cur_rm = np.full(rm_size, np.nan)
         for ii in range(0, len(functions)):
             fnc = clm[ii]
-            cur_rm = np.full(rm_size, np.nan)
-            relev_agg = training_data_agg[~np.isnan(training_data_agg[cur_ap, fnc])]
+            is_relev = ~np.isnan(training_data_agg[cur_ap, fnc])
+            relev_agg = training_data_agg[is_relev]
 
             if len(relev_agg) == 0:
                 continue
-            ind_x, ind_y = list(zip(*relev_agg.index))
-            cur_rm[ind_y, ind_x] = relev_agg[cur_ap, fnc].tolist()
-            dct_list[ii][cur_ap] = cur_rm
 
-    return dct_list
+            relev_agg_fnc = relev_agg[cur_ap, fnc].tolist()
 
+            if fnc == 'nanmean':
+                mean_rssi_vec = relev_agg_fnc
+                ind_x, ind_y = list(zip(*relev_agg.index))
+                cur_rm[ind_y, ind_x] = mean_rssi_vec
+
+            if fnc == 'nanstd':
+                relev_std = relev_agg_fnc
+
+        relev_agg_loc = training_data_agg_loc[is_relev]
+        irrelev_agg_loc = training_data_agg_loc[~is_relev]
+        radiomap_dict[cur_ap] = {'RSSI_map': [], 'loc_vec': [], 'irev_loc_vec': [], 'cov': []}
+        radiomap_dict[cur_ap]['RSSI_map']     = cur_rm
+        radiomap_dict[cur_ap]['loc_vec']      = relev_agg_loc    # [lon, lat]
+        radiomap_dict[cur_ap]['irev_loc_vec'] = irrelev_agg_loc  # [lon, lat]
+        radiomap_dict[cur_ap]['cov']      = train_kernel(relev_agg_loc, relev_agg_loc, train_std=relev_std)
+
+    return radiomap_dict
+
+
+def train_kernel(loc_a, loc_b, train_std=None):
+
+    if train_std is None:
+        sigma_f_sq = 1  # flactuation factor
+        l_sq = 1  # length scale factor
+    else:
+        # train
+        sigma_f_sq = np.mean(train_std)
+        l_sq = 34.
+        hyperparams = {'sigma_f_sq': sigma_f_sq, 'l_sq': l_sq}
+
+    k = eval_kernel(loc_a, loc_b, hyperparams)
+
+    # retain original STDs
+    k = k - np.diag(np.diag(k)) + np.diag(train_std)
+
+    return k, hyperparams
+
+
+def eval_kernel(loc_a, loc_b, hyper_params={}):
+
+    if hyper_params == {}:
+        sigma_f_sq = 1  # flactuation factor
+        l_sq = 1        # length scale factor
+    else:
+        sigma_f_sq = hyper_params['sigma_f_sq']
+        l_sq       = hyper_params['l_sq']
+
+    k = sigma_f_sq * np.exp(-1/(2*l_sq) * pydist.cdist(loc_a, loc_b))
+
+    return k
