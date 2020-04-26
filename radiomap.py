@@ -146,13 +146,16 @@ def get_grid_edges(cur_training_data, grid_size):
     return [min_x, max_x], [min_y, max_y]
 
 
-def get_radiomap_dict(training_data, grid):
+def get_radiomap_dict(training_data, grid, functions=None):
     """
     Create radiomap in a specific extent, using training_data
     :param training_data: DataFrame containing data to train RM with
     :param grid: tuple (grid_lon, grid_lat, grid_size) = ([grid_min_lon, grid_max_lon], [grid_min_lat, grid_max_lat], (dx,dy))
     :return: Dataframe containing RM in the specified extent
     """
+    if (functions is None) or len(functions) == 1:
+        functions = [np.nanmean, np.nanstd]
+
     # setting up necessary variables
     wap_column_names = training_data.filter(regex=("WAP\d*")).columns
     relev_aps = wap_column_names[(~np.isnan(training_data[wap_column_names])).any(axis=0)]
@@ -163,23 +166,33 @@ def get_radiomap_dict(training_data, grid):
     trn_indices = coordinates_to_indices(training_data["LONGITUDE"], training_data["LATITUDE"], grid_anchor, grid_size)
     training_data.insert(0, "grid_pnt", trn_indices)
     training_data_gridgroups = training_data.groupby(by="grid_pnt")
-    training_data_agg = training_data_gridgroups.agg({i: np.nanmean for i in relev_aps})
-    training_data_agg_std = training_data_gridgroups.agg({i: np.nanstd for i in relev_aps})
-    training_data_agg_loc = training_data_gridgroups.agg({i: np.nanmean for i in ['LONGITUDE','LATITUDE']})
+    training_data_agg = training_data_gridgroups.agg({i: functions for i in relev_aps})
+    training_data_agg_loc = training_data_gridgroups.agg({i: np.nanmean for i in ['LONGITUDE', 'LATITUDE']})
 
     # create a RM for each AP and insert it into the dictionary
     for cur_ap in relev_aps:
+        clm = training_data_agg[cur_ap].columns  # column names might be different than func if func isn't a string
         cur_rm = np.full(rm_size, np.nan)
-        is_relev = ~np.isnan(training_data_agg[cur_ap])
-        relev_mean = training_data_agg[is_relev]
-        relev_std = training_data_agg_std[is_relev][cur_ap]
+        for ii in range(0, len(functions)):
+            fnc = clm[ii]
+            is_relev = ~np.isnan(training_data_agg[cur_ap, fnc])
+            relev_agg = training_data_agg[is_relev]
+
+            if len(relev_agg) == 0:
+                continue
+
+            relev_agg_fnc = relev_agg[cur_ap, fnc].tolist()
+
+            if fnc == 'nanmean':
+                mean_rssi_vec = relev_agg_fnc
+                ind_x, ind_y = list(zip(*relev_agg.index))
+                cur_rm[ind_y, ind_x] = mean_rssi_vec
+
+            if fnc == 'nanstd':
+                relev_std = relev_agg_fnc
+
         relev_agg_loc = training_data_agg_loc[is_relev]
         irrelev_agg_loc = training_data_agg_loc[~is_relev]
-        
-        mean_rssi_vec = relev_mean[cur_ap].tolist()
-        ind_x, ind_y = list(zip(*relev_mean.index))
-        cur_rm[ind_y, ind_x] = mean_rssi_vec
-
         radiomap_dict[cur_ap] = {'RSSI_map': [], 'loc_vec': [], 'irev_loc_vec': [], 'cov': []}
         radiomap_dict[cur_ap]['RSSI_map']     = cur_rm
         radiomap_dict[cur_ap]['loc_vec']      = relev_agg_loc    # [lon, lat]
