@@ -7,14 +7,14 @@ import warnings
 
 # ## GLOBAL DEFAULT VARIABLES
 __MINIMAL_RSSI_VALUE = 0
-__RAYLEIGH_RSSI_VAR = 1000
+__RAYLEIGH_RSSI_VAR = 1
 __INPUT_NAN_VALUE = 100
 __KALMAN_STARTING_ERR = 1000
 __GRID_SIZE = [2, 2]
 __GRID_PADDING = [50, 50]
 
 
-def initial_data_processing(df, res_min=0, res_var=1):
+def initial_data_processing(df, res_min=0, res_var=None):
     """
     initial procession of data (normalization + missing APs replacing)
     :param res_var: normalized rayleigh distribution variance
@@ -31,6 +31,9 @@ def initial_data_processing(df, res_min=0, res_var=1):
     phone_nrm = pd.DataFrame()
     phone_nrm["min"] = pid_grp.agg({cn: np.nanmin for cn in wap_column_names}).min(axis=1)
     phone_nrm["std"] = pid_grp.agg({cn: rayleigh_dist_std for cn in wap_column_names}).sum(axis=1)
+    if not res_var:
+        res_var = phone_nrm["std"].iloc[0] # if no set var, var is the var of the first phone
+
     df[wap_column_names] = df[wap_column_names].subtract(phone_nrm["min"].loc[df["PHONEID"]].values, axis=0)
     df[wap_column_names] = df[wap_column_names].divide(phone_nrm["std"].loc[df["PHONEID"]].values, axis=0)
     df[wap_column_names] = df[wap_column_names].mul(res_var).add(res_min)
