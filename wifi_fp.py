@@ -74,15 +74,17 @@ def perform_kalman_filter_fp(df, radiomap, plot=False):
     kf_results = {"loc": [], "err": [], "real_err": []}  # store results
     ppi = np.diag(
         [np.mean(np.diff(xx) ** 2) / 12, np.mean(np.diff(yy) ** 2) / 12])  # location minimal error (uniform in cell)
-    sigma = np.sqrt(np.nanmean(rm_rssi_var, axis=(0, 1)))  # mean sigma of each AP
+    #sigma = np.sqrt(np.nanmean(rm_rssi_var, axis=(0, 1)))  # mean sigma of each AP
+    #min_sval = np.nanmin(rm_rssi_var[rm_rssi_var > 0])
     loc, err = [np.nanmean(xx), np.nanmean(yy)], np.diag(
         [__KALMAN_STARTING_ERR, __KALMAN_STARTING_ERR]) ** 2  # initialize location,error with no info
 
     for ind, row in df.iterrows():
         # ## ESTIMATION STEP
         # state transition of stationary model (simplest one)
-        rlv_cl = ~np.isnan(row[wap_column_names]) & ~np.isnan(sigma)
-        yk, rlv_rssi, rlv_sigma = row[wap_column_names[rlv_cl]], rm_rssi[:, :, rlv_cl], sigma[rlv_cl]
+        rlv_cl = ~np.isnan(row[wap_column_names]) & ~np.all(rm_rssi == 0, axis=(0, 1))
+        sigma = np.where(np.isnan(rm_rssi_var[:, :, rlv_cl]), 0, rm_rssi_var[:, :, rlv_cl])
+        yk, rlv_rssi = row[wap_column_names[rlv_cl]], rm_rssi[:, :, rlv_cl]
 
         # location-cell cost
         bstk = mvn.pdf(np.dstack([XX, YY]), loc, err)
@@ -99,7 +101,7 @@ def perform_kalman_filter_fp(df, radiomap, plot=False):
 
         ppxk = np.einsum("ijk,ijw", ppdf * bstk_s, ppdf) + ppi  # PXXk
         ppyk = np.einsum("ijk,ijw", ppdf * bstk_s, pydf)  # PXYk
-        pyyk = np.einsum("ijk,ijw", pydf * bstk_s, pydf) + np.diag(rlv_sigma)  # PYYk
+        pyyk = np.einsum("ijk,ijw", pydf * bstk_s, pydf) + np.diag(np.nansum(sigma * bstk_s, axis=(0,1)))  # PYYk
 
         # calculate the new location estimation and eerror
         K = np.matmul(ppyk, np.linalg.inv(pyyk))
