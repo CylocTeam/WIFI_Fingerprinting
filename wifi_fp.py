@@ -51,7 +51,7 @@ def rayleigh_dist_std(df):
     return np.sqrt((df ** 2).sum() / (2 * len(df)))
 
 
-def perform_kalman_filter_fp(df, radiomap, plot=False):
+def perform_kalman_filter_fp(df, radiomap, plot=False, qtile=0.9):
     """
     Perform Fingerprint Kalman Filter location estimation for dataframe of a specific device located within radiomap.
     Also plot the data to a figure and show it.
@@ -72,7 +72,7 @@ def perform_kalman_filter_fp(df, radiomap, plot=False):
     rm_rssi = np.where(~np.isnan(rm_rssi), rm_rssi, __MINIMAL_RSSI_VALUE)
 
     # initialize the data formats
-    kf_results = {"loc": [], "err": [], "real_err": []}  # store results
+    kf_results = []  # store results
     ppi = np.diag([np.mean(np.diff(xx) ** 2) / 12, np.mean(np.diff(yy) ** 2) / 12])
     sigma = np.nanmean(rm_rssi_var, axis=(0, 1))  # mean sigma of each AP
     loc, err = [np.nanmean(xx), np.nanmean(yy)], np.diag(
@@ -85,7 +85,7 @@ def perform_kalman_filter_fp(df, radiomap, plot=False):
 
         # ## ESTIMATION STEP
         # state transition of stationary model (simplest one)
-        rlv_cl = ~np.isnan(row[wap_column_names]) & ~np.isnan(sigma)
+        rlv_cl = ~np.isnan(row[wap_column_names]) & sigma > 0
         yk, rlv_rssi, rlv_sigma = row[wap_column_names[rlv_cl]], rm_rssi[:, :, rlv_cl], sigma[rlv_cl]
 
         # location-cell weights
@@ -110,34 +110,36 @@ def perform_kalman_filter_fp(df, radiomap, plot=False):
         loc = xk_min + np.matmul(K, (yk - y_hat))
         err = pxxk - np.matmul(K, pxyk.T)
         real_err = np.array([row.LONGITUDE, row.LATITUDE]) - loc
-        kf_results["loc"].append(loc)
-        kf_results["err"].append(err)
-        kf_results["real_err"].append(real_err)
+        hmj, hmi, ang = calculate_error_ellipse(err, qtile)
+        kf_results.append({"x": loc[0],
+                           "y": loc[1],
+                           "err_hmj": hmj,
+                           "err_hmi": hmi,
+                           "real_err": np.linalg.norm(real_err)})
 
         if plot:
-            a, b, t = calculate_error_ellipse(err)
             pid, bid, fid, ts = row[["PHONEID", "BUILDINGID", "FLOOR", "TIMESTAMP"]]
             time = datetime.fromtimestamp(ts)
             ttl = "\n".join(["", "Phone: " + str(pid), "BUILDING: " + str(bid) + ", FLOOR: " + str(fid),
                              "TIME: " + str(time), "Error: " + str(round(np.linalg.norm(real_err), 2)) + " [m]",
-                             "Ellipse Axis: " + str(round(a, 2)) + " [m], " + str(round(b, 2)) + " [m]"])
+                             "Ellipse Axis: " + str(round(hmj, 2)) + " [m], " + str(round(hmi, 2)) + " [m]"])
             fig = plt.gcf()
             fig.clf()
             plt.imshow(np.linalg.norm(pydf, axis=2), extent=radiomap.extent, origin="lower", vmin=0)
             plt.colorbar()
             plt.scatter(row.LONGITUDE, row.LATITUDE, c="r", marker="x")
             plt.scatter(loc[0], loc[1], c="m", marker="*")
-            plot_ellipse(loc, a, b, t, color="m")
+            plot_ellipse(loc, hmj, hmi, ang, color="m")
             plt.grid()
             plt.xlabel("Longitude")
             plt.ylabel("Latitude")
             plt.title(ttl)
             plt.draw()
             plt.pause(.2)
-    return kf_results
+    return pd.DataFrame(kf_results, index=df.index)
 
 
-def calculate_error_ellipse(err, prc=0.4):
+def calculate_error_ellipse(err, prc=0.9):
     """
     Get an error matrix and calculate the axis and angle of ellipse
     :param err: 2X2 Error matrix
@@ -152,17 +154,17 @@ def calculate_error_ellipse(err, prc=0.4):
     return hmja, hmia, ang
 
 
-def plot_ellipse(center, a, b, t, color="b"):
+def plot_ellipse(center, hmj, hmi, ang, color="b"):
     """
     Get data of an ellipse and plot it to figure
     :param center: center of ellipse
-    :param a: half major axis size
-    :param b: half minor axis size
-    :param t: angle of ellipse (to x direction)
+    :param hmj: half major axis size
+    :param hmi: half minor axis size
+    :param ang: angle of ellipse (to x direction)
     :param color: color of line plot
     """
     theta = np.arange(0, 2 * np.pi, 0.01)
-    ppx, ppy = np.matmul([[np.cos(t), -np.sin(t)], [np.sin(t), np.cos(t)]], [a * np.cos(theta), b * np.sin(theta)])
+    ppx, ppy = np.matmul([[np.cos(ang), -np.sin(ang)], [np.sin(ang), np.cos(ang)]], [hmj * np.cos(theta), hmi * np.sin(theta)])
     plt.plot(center[0] + ppx, center[1] + ppy, color=color)
     return
 
@@ -251,12 +253,14 @@ if __name__ == "__main__":
     rm_per_area = create_radiomap_objects(training_data, __GRID_SIZE, padding=__GRID_PADDING)
 
     # iterate per (device, building, floor) and perform Fingerprint Kalman Filter estimation per line
-    grp_res = {}
+    grp_res = []
     vgrp = validation_data.groupby(["PHONEID", "BUILDINGID", "FLOOR"])
     for name, cvgrp in vgrp:
-        # TODO: add building and floor estimation via mean Jacaard metric for APs
         phone_id, building_id, floor = name
         radiomap = rm_per_area[building_id, floor]
         with warnings.catch_warnings():  # suppress runtime errors
             warnings.simplefilter("ignore", category=RuntimeWarning)
-            grp_res[name] = perform_kalman_filter_fp(cvgrp, radiomap, plot=True)
+            grp_res.append(perform_kalman_filter_fp(cvgrp, radiomap, plot=True))
+    validation_res = pd.concat(grp_res)
+
+
