@@ -7,10 +7,10 @@ import warnings
 
 # ## GLOBAL DEFAULT VARIABLES
 __MINIMAL_RSSI_VALUE = 0
-__RAYLEIGH_RSSI_VAR = 1
+__RAYLEIGH_RSSI_VAR = None
 __INPUT_NAN_VALUE = 100
 __KALMAN_STARTING_ERR = 1000
-__GRID_SIZE = [2, 2]
+__GRID_SIZE = [5,5]
 __GRID_PADDING = [50, 50]
 
 
@@ -62,49 +62,53 @@ def perform_kalman_filter_fp(df, radiomap, plot=False):
     """
     wap_column_names = df.filter(regex="WAP\d*").columns
     xx, yy = radiomap.get_map_ranges()
-    XX, YY = np.meshgrid(xx, yy)
+    sgrid = np.dstack(np.meshgrid(xx, yy))
     rm_rssi, rm_rssi_var = radiomap.get_ap_maps_ndarray(wap_column_names)
-    empty_slices = np.isnan(rm_rssi_var).all(axis=(0, 1)) | np.isnan(rm_rssi).all(axis=(0, 1))
 
     # find the relevant APs of the device-area
+    empty_slices = np.isnan(rm_rssi_var).all(axis=(0, 1)) | np.isnan(rm_rssi).all(axis=(0, 1))
     relev_ind = ~empty_slices | (~np.isnan(df[wap_column_names])).any(axis=0)
     rm_rssi, rm_rssi_var, wap_column_names = rm_rssi[:, :, relev_ind], rm_rssi_var[:, :, relev_ind], wap_column_names[relev_ind]
     rm_rssi = np.where(~np.isnan(rm_rssi), rm_rssi, __MINIMAL_RSSI_VALUE)
 
+    # initialize the data formats
     kf_results = {"loc": [], "err": [], "real_err": []}  # store results
-    ppi = np.diag(
-        [np.mean(np.diff(xx) ** 2) / 12, np.mean(np.diff(yy) ** 2) / 12])  # location minimal error (uniform in cell)
-    sigma = np.sqrt(np.nanmean(rm_rssi_var, axis=(0, 1)))  # mean sigma of each AP
+    ppi = np.diag([np.mean(np.diff(xx) ** 2) / 12, np.mean(np.diff(yy) ** 2) / 12])
+    sigma = np.nanmean(rm_rssi_var, axis=(0, 1))  # mean sigma of each AP
     loc, err = [np.nanmean(xx), np.nanmean(yy)], np.diag(
         [__KALMAN_STARTING_ERR, __KALMAN_STARTING_ERR]) ** 2  # initialize location,error with no info
 
     for ind, row in df.iterrows():
+        # STATE TRANSITION
+        # stationary model (simplest one)
+        xk_min, pk_min = loc, err
+
         # ## ESTIMATION STEP
         # state transition of stationary model (simplest one)
         rlv_cl = ~np.isnan(row[wap_column_names]) & ~np.isnan(sigma)
         yk, rlv_rssi, rlv_sigma = row[wap_column_names[rlv_cl]], rm_rssi[:, :, rlv_cl], sigma[rlv_cl]
 
-        # location-cell cost
-        bstk = mvn.pdf(np.dstack([XX, YY]), loc, err)
-        bstk /= np.sum(bstk)
-        bstk_s = bstk[:, :, np.newaxis]
+        # location-cell weights
+        bstk_nnrm = mvn.pdf(sgrid, xk_min, pk_min)
+        bstk_s = bstk_nnrm[:, :, np.newaxis] / np.sum(bstk_nnrm)
 
+        # prior estimations
         y_hat = np.nanmean(bstk_s * rlv_rssi, axis=(0, 1))
-        p_hat = [(bstk * XX).sum(), (bstk * YY).sum()]
+        p_hat = np.sum(sgrid * bstk_s, axis=(0, 1))
 
         # ## UPDATE STEP
-        # calculate the covariance matrices
-        ppdf = np.dstack([XX, YY]) - p_hat
+        # calculate location and rssi diffs from prior estimation
+        ppdf = sgrid - p_hat
         pydf = rlv_rssi - y_hat
 
-        ppxk = np.einsum("ijk,ijw", ppdf * bstk_s, ppdf) + ppi  # PXXk
-        ppyk = np.einsum("ijk,ijw", ppdf * bstk_s, pydf)  # PXYk
+        pxxk = np.einsum("ijk,ijw", ppdf * bstk_s, ppdf) + ppi  # PXXk
+        pxyk = np.einsum("ijk,ijw", ppdf * bstk_s, pydf)  # PXYk
         pyyk = np.einsum("ijk,ijw", pydf * bstk_s, pydf) + np.diag(rlv_sigma)  # PYYk
 
         # calculate the new location estimation and eerror
-        K = np.matmul(ppyk, np.linalg.inv(pyyk))
-        loc = loc + np.matmul(K, (yk - y_hat))
-        err = ppxk - np.matmul(K, ppyk.T)
+        K = np.matmul(pxyk, np.linalg.inv(pyyk))
+        loc = xk_min + np.matmul(K, (yk - y_hat))
+        err = pxxk - np.matmul(K, pxyk.T)
         real_err = np.array([row.LONGITUDE, row.LATITUDE]) - loc
         kf_results["loc"].append(loc)
         kf_results["err"].append(err)
@@ -133,15 +137,14 @@ def perform_kalman_filter_fp(df, radiomap, plot=False):
     return kf_results
 
 
-def calculate_error_ellipse(err, prc=0.9):
+def calculate_error_ellipse(err, prc=0.4):
     """
     Get an error matrix and calculate the axis and angle of ellipse
     :param err: 2X2 Error matrix
     :param prc: percentile of error to contain (def: 90%)
     :return: (half major axis size, half minor axis size, angle)
     """
-    # kappa = -2*np.log(1-prc)
-    kappa = 1
+    kappa = -2*np.log(1-prc)
     eigval, eigvec = np.linalg.eig(err)
     hmja, hmia = kappa * np.sqrt(np.max(eigval)), kappa * np.sqrt(np.min(eigval))
     hmj_ind = np.argmax(eigval)

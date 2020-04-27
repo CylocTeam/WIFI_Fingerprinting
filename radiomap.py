@@ -138,6 +138,7 @@ def get_radiomap_dict(training_data, grid, functions=None):
     training_data_gridgroups = training_data.groupby(by="grid_pnt")
     training_data_agg = training_data_gridgroups.agg({i: functions for i in relev_aps})
 
+    # TODO: limit minimal number of samples in each cell
     # create a RM for each AP and insert it into the dictionary
     for cur_ap in relev_aps:
         clm = training_data_agg[cur_ap].columns # column names might be different than func if func isn't a string
