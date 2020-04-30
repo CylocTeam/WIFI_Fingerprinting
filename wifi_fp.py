@@ -9,7 +9,7 @@ import warnings
 __MINIMAL_RSSI_VALUE = 0
 __RAYLEIGH_RSSI_VAR = None
 __INPUT_NAN_VALUE = 100
-__KALMAN_STARTING_ERR = 100
+__KALMAN_STARTING_ERR = 10
 __GRID_SIZE = [2, 2]
 __GRID_PADDING = [50, 50]
 
@@ -69,13 +69,15 @@ def perform_kalman_filter_fp(df, radiomap, plot=False, qtile=0.9):
     empty_slices = np.isnan(rm_rssi_var).all(axis=(0, 1)) | np.isnan(rm_rssi).all(axis=(0, 1))
     relev_ind = ~empty_slices | (~np.isnan(df[wap_column_names])).any(axis=0)
     rm_rssi, rm_rssi_var, wap_column_names = rm_rssi[:, :, relev_ind], rm_rssi_var[:, :, relev_ind], wap_column_names[relev_ind]
-    rm_rssi = np.where(~np.isnan(rm_rssi), rm_rssi, __MINIMAL_RSSI_VALUE)
+    rm_rssi = np.where(~np.isnan(rm_rssi), rm_rssi, __MINIMAL_RSSI_VALUE-1)
 
     # initialize the data formats
     kf_results = {"loc": [], "err": [], "real_err": []}  # store results
     ppi = np.diag([np.mean(np.diff(xx) ** 2) / 12, np.mean(np.diff(yy) ** 2) / 12])
-    loc, err = [np.nanmean(xx), np.nanmean(yy)], np.diag(
-        [__KALMAN_STARTING_ERR, __KALMAN_STARTING_ERR]) ** 2  # initialize location,error with no info
+
+    # initialize location,error with no info
+    loc, err = [np.nanmean(xx), np.nanmean(yy)], np.diag([((np.max(xx)-np.min(xx))**2)/12,
+                                                          ((np.max(yy)-np.min(yy))**2)/12])
 
     for ind, row in df.iterrows():
         # STATE TRANSITION
@@ -84,9 +86,9 @@ def perform_kalman_filter_fp(df, radiomap, plot=False, qtile=0.9):
 
         # ## ESTIMATION STEP
         # get current step data
-        rlv_cl = ~np.isnan(row[wap_column_names]) & ~np.all(rm_rssi == 0, axis=(0, 1))
-        sigma = np.where(np.isnan(rm_rssi_var[:, :, rlv_cl]), 0, rm_rssi_var[:, :, rlv_cl])
-        yk, rlv_rssi = row[wap_column_names[rlv_cl]], rm_rssi[:, :, rlv_cl]
+        sigma = np.where(np.isnan(rm_rssi_var), 0, rm_rssi_var)
+        rlv_cl = ~np.isnan(row[wap_column_names]) & ~np.all(rm_rssi == 0, axis=(0, 1)) & ~(sigma == 0).all(axis=(0, 1))
+        yk, rlv_rssi, sigma = row[wap_column_names[rlv_cl]], rm_rssi[:, :, rlv_cl], sigma[:, :, rlv_cl]
 
         # location-cell weights
         bstk_nnrm = mvn.pdf(sgrid, xk_min, pk_min)
@@ -104,7 +106,7 @@ def perform_kalman_filter_fp(df, radiomap, plot=False, qtile=0.9):
         # calculate the covariance matrices
         pxxk = np.einsum("ijk,ijw", ppdf * bstk_s, ppdf) + ppi
         pxyk = np.einsum("ijk,ijw", ppdf * bstk_s, pydf)
-        pyyk = np.einsum("ijk,ijw", pydf * bstk_s, pydf) + np.diag(np.nansum(sigma * bstk_s, axis=(0,1)))
+        pyyk = np.einsum("ijk,ijw", pydf * bstk_s, pydf) + np.diag(np.nansum(sigma * bstk_s, axis=(0, 1)))
 
         # calculate the new location estimation and eerror
         K = np.matmul(pxyk, np.linalg.inv(pyyk))
