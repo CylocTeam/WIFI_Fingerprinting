@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import scipy.spatial.distance as pydist
+import matplotlib.pyplot as plt
 
 
 # class RadioCell:
@@ -72,7 +73,11 @@ class RadioMap:
         for ap in ap_list:
             if ap in keys:
                 radio_list.append(self.radiomaps[ap]["RSSI_map"]['nanmean'])
-                radio_ap_list.append(self.radiomaps[ap]["RSSI_map"]['nanstd'])
+                try:
+                    radio_ap_list.append(self.radiomaps[ap]["RSSI_map"]['nanstd'])
+                except:
+                    print('bulding: {bld}, floor: {flr}, AP={ap} '
+                          'No STD available'.format(bld=self.building, flr=self.floor, ap=ap))
             else:
                 radio_list.append(np.full(self.map_size, np.nan))
                 radio_ap_list.append(np.full(self.map_size, np.nan))
@@ -87,8 +92,8 @@ class RadioMap:
         for rm in self.radiomaps.items():
             rm_content = rm[1]
             # validate sustainable data
-            if pydist.norm(np.diag(rm_content['cov'][0])) == 0: # single samples along all cells
 
+            if np.equal(rm_content['cov'][0], 0).all() or pydist.norm(np.diag(rm_content['cov'][0])) == 0 : # single samples along all cells
                 print('bulding: {bld}, floor: {flr}, AP={ap} '
                       'contains single point - Will not be interpolated'.format(bld=self.building, flr=self.floor, ap=rm[0]))
                 continue
@@ -120,9 +125,22 @@ class RadioMap:
                 print('bulding: {bld}, floor: {flr}, AP={ap} '
                       'unpacking error'.format(bld=self.building, flr=self.floor, ap=rm[0]))
                 continue
-
             ## todo - if y2_conf too high for specific cell - use other interpolation method
 
+    def plot_rssi_map(self, ap_list, lon_lat):
+
+        for ap in ap_list:
+            if ap in self.radiomaps.keys():
+                curr_map_dict = self.radiomaps[ap]
+                interpolation_pts = curr_map_dict['irev_loc_vec']  # up to pts could not interpolate
+                rssi_map = curr_map_dict['RSSI_map']
+                fig = plt.figure()
+                plt.imshow(lon_lat,cmap=rssi_map, extent=self.extent, origin="lower", vmin=0)
+                plt.colorbar()
+                plt.scatter(interpolation_pts[0], interpolation_pts[1], c="r", marker="x")
+                plt.grid()
+                plt.xlabel("Longitude")
+                plt.ylabel("Latitude")
 
 def create_radiomap_objects(training_data, grid_size=(1, 1), interpolation=None):
     unique_areas = training_data[["BUILDINGID", "FLOOR"]].drop_duplicates()
@@ -134,6 +152,18 @@ def create_radiomap_objects(training_data, grid_size=(1, 1), interpolation=None)
         rm_per_area[building_id, floor] = cur_rm
     return rm_per_area
 
+def plot_rssi_maps(rm_per_area, training_data, building_id=0, floor=0, ap_list=None):
+    rm = rm_per_area[building_id, floor]
+
+    if ap_list is None:
+        ap_list = list(rm.radiomaps.keys())
+        ap_list = ap_list[np.random.randint(low=0, high=len(ap_list), size=min(5, len(ap_list)))]  # random APs
+
+    area = [building_id, floor]
+    cur_training_data = training_data.loc[(training_data[["BUILDINGID", "FLOOR"]] == area).all(axis=1)]
+    lon_lat = [cur_training_data["LONGITUDE"], cur_training_data["LATITUDE"]]
+
+    rm.plot_rssi_map(ap_list=ap_list, lon_lat=lon_lat)
 
 def coordinates_to_indices(x, y, grid_anchor, grid_size):
     """
@@ -207,12 +237,16 @@ def get_radiomap_dict(training_data, grid, functions=None):
             cur_rm[ind_y, ind_x] = relev_agg_fnc
             radiomap_dict[cur_ap]['RSSI_map'][fnc] = cur_rm
 
-        relev_agg_loc = training_data_agg_loc[is_relev]
-        irrelev_agg_loc = training_data_agg_loc[~is_relev]
+            if fnc == "nanmean":
+                relev_agg_loc = training_data_agg_loc[is_relev]
+                irrelev_agg_loc = training_data_agg_loc[~is_relev]
 
         radiomap_dict[cur_ap]['loc_vec']      = relev_agg_loc    # [lon, lat]
         radiomap_dict[cur_ap]['irev_loc_vec'] = irrelev_agg_loc  # [lon, lat]
-        radiomap_dict[cur_ap]['cov']      = train_kernel(relev_agg_loc, relev_agg_loc, train_std=relev_std)
+        if len(relev_agg_loc) == 0 or len(relev_std) != len(relev_agg_loc): # no reception at this cell or other stupid reason
+            radiomap_dict[cur_ap]['cov'] = [0, None]
+        else:
+            radiomap_dict[cur_ap]['cov']      = train_kernel(relev_agg_loc, relev_agg_loc, train_std=relev_std)
 
     return radiomap_dict
 

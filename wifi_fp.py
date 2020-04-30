@@ -134,3 +134,5 @@ if __name__ == "__main__":
 
     for ii in validation_results.index:
         calculate_line_location(validation_data.loc[ii], rm_per_area, plot_flag=True)
+
+    rm.plot_rssi_maps(rm_per_area=rm_per_area, training_data=training_data,building_id=0, floor=0)
