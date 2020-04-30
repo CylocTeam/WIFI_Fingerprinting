@@ -9,7 +9,7 @@ import warnings
 __MINIMAL_RSSI_VALUE = 0
 __RAYLEIGH_RSSI_VAR = None
 __INPUT_NAN_VALUE = 100
-__KALMAN_STARTING_ERR = 1000
+__KALMAN_STARTING_ERR = 100
 __GRID_SIZE = [2, 2]
 __GRID_PADDING = [50, 50]
 
@@ -51,7 +51,7 @@ def rayleigh_dist_std(df):
     return np.sqrt((df ** 2).sum() / (2 * len(df)))
 
 
-def perform_kalman_filter_fp(df, radiomap, plot=False):
+def perform_kalman_filter_fp(df, radiomap, plot=False, qtile=0.9):
     """
     Perform Fingerprint Kalman Filter location estimation for dataframe of a specific device located within radiomap.
     Also plot the data to a figure and show it.
@@ -116,7 +116,7 @@ def perform_kalman_filter_fp(df, radiomap, plot=False):
         kf_results["real_err"].append(real_err)
 
         if plot:
-            a, b, t = calculate_error_ellipse(err)
+            a, b, t = calculate_error_ellipse(err, qtile)
             pid, bid, fid, ts = row[["PHONEID", "BUILDINGID", "FLOOR", "TIMESTAMP"]]
             time = datetime.fromtimestamp(ts)
             ttl = "\n".join(["", "Phone: " + str(pid), "BUILDING: " + str(bid) + ", FLOOR: " + str(fid),
@@ -145,8 +145,7 @@ def calculate_error_ellipse(err, prc=0.9):
     :param prc: percentile of error to contain (def: 90%)
     :return: (half major axis size, half minor axis size, angle)
     """
-    # kappa = -2*np.log(1-prc)
-    kappa = 1
+    kappa = -2*np.log(1-prc)
     eigval, eigvec = np.linalg.eig(err)
     hmja, hmia = kappa * np.sqrt(np.max(eigval)), kappa * np.sqrt(np.min(eigval))
     hmj_ind = np.argmax(eigval)
