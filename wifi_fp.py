@@ -12,7 +12,7 @@ __INPUT_NAN_VALUE = 100
 __KALMAN_STARTING_ERR = 10
 __GRID_SIZE = [2, 2]
 __GRID_PADDING = [50, 50]
-
+__STATE_MODEL_NOISE = np.diag([8.3, 8.3])
 
 def initial_data_processing(df, res_min=0, res_var=None):
     """
@@ -82,7 +82,7 @@ def perform_kalman_filter_fp(df, radiomap, plot=False, qtile=0.9):
     for ind, row in df.iterrows():
         # STATE TRANSITION
         # stationary model (simplest one)
-        xk_min, pk_min = loc, err
+        xk_min, pk_min = loc, err + __STATE_MODEL_NOISE
 
         # ## ESTIMATION STEP
         # get current step data
